@@ -1,77 +1,172 @@
-"use client"
+// components/auth-provider.tsx
+'use client'
+import React, {
+  createContext,
+  useContext,
+  useEffect,
+  useState
+} from 'react'
+import { supabase } from '@/lib/supabaseClient'
+import type { User, Session } from '@supabase/supabase-js'
 
-import type React from "react"
-
-import { createContext, useContext, useState, useEffect } from "react"
-
-type UserRole = "super-admin" | "moderator" | "viewer"
-
-interface User {
-  id: string
-  email: string
-  name: string
-  role: UserRole
-  avatar?: string
+export type AdminProfile = {
+  id: string       // auth.users.id
+  full_name: string
+  role: 'super_admin' | 'sub_admin' | 'moderator' | 'viewer'
+  approved: boolean
+  partner_id: string
+  partner_name: string
 }
 
-interface AuthContextType {
+// The shape we expose
+interface AuthContextValue {
   user: User | null
-  login: (email: string, password: string) => Promise<void>
-  logout: () => void
+  profile: AdminProfile | null
+  session: Session | null
+  loading: boolean
+  login: (email: string, pass: string) => Promise<void>
+  register: (
+    email: string,
+    pass: string,
+    full_name: string,
+    role: 'sub_admin'|'moderator'|'viewer',
+    partner_name: string
+  ) => Promise<void>
+  logout: () => Promise<void>
+  resetPassword: (email: string) => Promise<void>
   hasPermission: (permission: string) => boolean
 }
 
-const AuthContext = createContext<AuthContextType | undefined>(undefined)
+const AuthContext = createContext<AuthContextValue | undefined>(undefined)
 
-const ROLE_PERMISSIONS = {
-  "super-admin": ["*"],
-  moderator: ["quests.manage", "submissions.review", "users.view"],
-  viewer: ["dashboard.view", "quests.view", "users.view"],
-}
+export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) => {
+  const [user, setUser] = useState<User|null>(null)
+  const [profile, setProfile] = useState<AdminProfile|null>(null)
+  const [session, setSession] = useState<Session|null>(null)
+  const [loading, setLoading] = useState(true)
 
-export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User | null>(null)
-
+  // On mount: check existing session
   useEffect(() => {
-    // Mock authentication - in real app, check for valid session
-    const mockUser: User = {
-      id: "1",
-      email: "admin@alphiq.com",
-      name: "Admin User",
-      role: "super-admin",
-      avatar: "/placeholder.svg?height=32&width=32",
-    }
-    setUser(mockUser)
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session)
+      setUser(session?.user ?? null)
+      setLoading(false)
+    })
+
+    // Subscribe to auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      (_event, newSession) => {
+        setSession(newSession)
+        setUser(newSession?.user ?? null)
+      }
+    )
+    return () => subscription.unsubscribe()
   }, [])
 
-  const login = async (email: string, password: string) => {
-    // Mock login - in real app, authenticate with OAuth2 + 2FA
-    const mockUser: User = {
-      id: "1",
-      email,
-      name: "Admin User",
-      role: "super-admin",
+  // Whenever user changes, re-fetch admin profile
+  useEffect(() => {
+    if (!user) {
+      setProfile(null)
+      return
     }
-    setUser(mockUser)
+    setLoading(true)
+    supabase
+      .from('admin_user_profiles')
+      .select('*')
+      .eq('id', user.id)
+      .single()
+      .then(({ data, error }) => {
+        if (error) {
+          console.error('fetch profile error', error)
+          setProfile(null)
+        } else {
+          setProfile(data)
+        }
+        setLoading(false)
+      })
+  }, [user])
+
+  // ------ Actions ------
+
+  const login = async (email: string, password: string) => {
+    setLoading(true)
+    const { error } = await supabase.auth.signInWithPassword({ email, password })
+    setLoading(false)
+    if (error) throw error
   }
 
-  const logout = () => {
+  const register = async (
+    email: string,
+    password: string,
+    full_name: string,
+    role: 'sub_admin'|'moderator'|'viewer',
+    partner_name: string
+  ) => {
+    setLoading(true)
+    // 1) Signup with Supabase Auth
+    const { data, error: signUpError } = await supabase.auth.signUp({
+      email,
+      password
+    })
+    const newUser = data?.user
+    if (signUpError || !newUser) {
+      setLoading(false)
+      throw signUpError
+    }
+    // 2) Create admin profile (awaiting approval)
+    const { error: profileErr } = await supabase
+      .from('admin_user_profiles')
+      .insert({
+        id:            newUser.id,
+        full_name,
+        role,
+        partner_name,          // partner_id will default to random
+        approved:     false
+      })
+    setLoading(false)
+    if (profileErr) throw profileErr
+  }
+
+  const logout = async () => {
+    await supabase.auth.signOut()
     setUser(null)
+    setProfile(null)
   }
 
+  const resetPassword = async (email: string) => {
+    const { error } = await supabase.auth.resetPasswordForEmail(email)
+    if (error) throw error
+  }
+
+  // Permission logic
+  const rolePermissions: Record<string, string[]> = {
+    super_admin: ['*'],
+    sub_admin: ['dashboard.view', 'quests.manage', 'users.view'],
+    moderator: ['dashboard.view', 'submissions.review'],
+    viewer: ['dashboard.view'],
+  }
   const hasPermission = (permission: string) => {
-    if (!user) return false
-    const userPermissions = ROLE_PERMISSIONS[user.role] || []
-    return userPermissions.includes("*") || userPermissions.includes(permission)
+    if (!profile) return false
+    const allowed = rolePermissions[profile.role] || []
+    return allowed.includes('*') || allowed.includes(permission)
   }
 
-  return <AuthContext.Provider value={{ user, login, logout, hasPermission }}>{children}</AuthContext.Provider>
+  return (
+    <AuthContext.Provider
+      value={{
+        user, profile, session, loading,
+        login, register, logout, resetPassword,
+        hasPermission,
+      }}
+    >
+      {children}
+    </AuthContext.Provider>
+  )
 }
 
+// Hook
 export function useAuth() {
-  const context = useContext(AuthContext)
-  if (context === undefined) {
-    throw new Error("useAuth must be used within an AuthProvider")
-  }
-  return context
+  const ctx = useContext(AuthContext)
+  if (!ctx) throw new Error('useAuth must be inside AuthProvider')
+  return ctx
 }

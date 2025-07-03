@@ -24,9 +24,10 @@ import {
   Zap,
   Settings,
   Shield,
+  LogOut,
 } from "lucide-react"
 import Link from "next/link"
-import { usePathname } from "next/navigation"
+import { usePathname, useRouter } from "next/navigation"
 import { useAuth } from "@/components/auth-provider"
 import { Badge } from "@/components/ui/badge"
 
@@ -77,11 +78,17 @@ const menuItems = [
 
 export function AppSidebar() {
   const pathname = usePathname()
-  const { hasPermission, user } = useAuth()
+  const { hasPermission, user, logout } = useAuth()
+  const router = useRouter()
 
   const visibleItems = menuItems.filter(
     (item) => hasPermission(item.permission) || item.permission === "dashboard.view",
   )
+
+  const handleLogout = async () => {
+    await logout()
+    router.push("/admin/login")
+  }
 
   return (
     <Sidebar variant="inset" className="border-r border-white/10">
@@ -96,10 +103,12 @@ export function AppSidebar() {
           </div>
         </div>
         <div className="px-4 pb-2">
-          <Badge variant="outline" className="bg-accent/20 text-accent border-accent/30">
-            <Shield className="h-3 w-3 mr-1" />
-            {user?.role.replace("-", " ").toUpperCase()}
-          </Badge>
+          {user?.role ? (
+            <Badge variant="outline" className="bg-accent/20 text-accent border-accent/30">
+              <Shield className="h-3 w-3 mr-1" />
+              {user.role.replace("-", " ").toUpperCase()}
+            </Badge>
+          ) : null}
         </div>
       </SidebarHeader>
       <SidebarContent>
@@ -136,6 +145,12 @@ export function AppSidebar() {
                 <Settings className="h-4 w-4" />
                 <span>Settings</span>
               </Link>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton onClick={handleLogout} className="nav-item-hover text-destructive hover:bg-destructive/10 hover:text-destructive">
+              <LogOut className="h-4 w-4" />
+              <span>Log out</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
