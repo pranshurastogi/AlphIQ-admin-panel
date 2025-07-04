@@ -115,12 +115,13 @@ export default function InvitePage({ params }: { params: Promise<{ id: string }>
     </div>
   )
   if (success) return (
-    <div className="flex min-h-screen items-center justify-center">
-      <Card className="max-w-md w-full p-6 text-center">
+    <div className="flex min-h-screen items-center justify-center bg-background">
+      <Card className="max-w-md w-full p-8 text-center rounded-xl shadow-lg border border-amber-200">
         <CardHeader>
-          <CardTitle>Registration Complete!</CardTitle>
+          <CardTitle className="text-2xl text-amber">Registration Complete!</CardTitle>
           <CardDescription>
             Your super-admin account has been created.<br/>
+            <span className="font-semibold">You may receive an email to verify your account. Please check your inbox.</span><br/>
             Redirecting to login…
           </CardDescription>
         </CardHeader>
@@ -133,38 +134,38 @@ export default function InvitePage({ params }: { params: Promise<{ id: string }>
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background p-4">
-      <Card className="max-w-md w-full p-6">
+      <Card className="max-w-md w-full p-8 rounded-xl shadow-lg border border-amber-200">
         <CardHeader className="text-center">
-          <CardTitle className="text-2xl">Super Admin Invitation</CardTitle>
+          <CardTitle className="text-3xl text-amber font-extrabold">Super Admin Invitation</CardTitle>
           <CardDescription>
             Complete your registration to become a super admin for AlphIQ.
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <form onSubmit={handleSubmit} className="space-y-5">
-            {err && <div className="text-red-500 text-center">{err}</div>}
+          <form onSubmit={handleSubmit} className="space-y-6">
+            {err && <div className="text-red-500 text-center mb-2">{err}</div>}
             <div>
               <Label htmlFor="name">Full Name</Label>
-              <Input id="name" type="text" value={name} onChange={e=>setName(e.target.value)} required autoFocus disabled={loading}/>
+              <Input id="name" type="text" value={name} onChange={e=>setName(e.target.value)} required autoFocus disabled={loading} className="mt-1"/>
             </div>
             <div>
               <Label htmlFor="email">Email</Label>
-              <Input id="email" type="email" value={email} onChange={e=>setEmail(e.target.value)} required disabled={loading}/>
+              <Input id="email" type="email" value={email} onChange={e=>setEmail(e.target.value)} required disabled={loading} className="mt-1"/>
             </div>
             <div>
               <Label htmlFor="pw">Password</Label>
               <div className="relative">
-                <Input id="pw" type={showPw ? 'text' : 'password'} value={pw} onChange={e=>setPw(e.target.value)} required disabled={loading}/>
+                <Input id="pw" type={showPw ? 'text' : 'password'} value={pw} onChange={e=>setPw(e.target.value)} required disabled={loading} className="mt-1 pr-10"/>
                 <button type="button" tabIndex={-1} className="absolute right-2 top-2 text-gray-400" onClick={()=>setShowPw(v=>!v)}>
                   {showPw ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
                 </button>
               </div>
             </div>
-            <Button type="submit" className="w-full" disabled={loading}>
+            <Button type="submit" className="w-full text-lg py-3" disabled={loading}>
               {loading ? <><Loader2 className="w-4 h-4 mr-2 animate-spin"/>Registering…</> : 'Complete Registration'}
             </Button>
-            <div className="pt-2 text-center text-sm">
-              Already registered? <Link href="/admin/login" className="text-amber">Login</Link>
+            <div className="pt-4 text-center text-sm">
+              Already registered? <Link href="/admin/login" className="text-amber font-semibold">Login</Link>
             </div>
           </form>
         </CardContent>

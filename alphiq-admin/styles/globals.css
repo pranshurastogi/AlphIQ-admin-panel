@@ -92,3 +92,22 @@ body {
     @apply bg-background text-foreground;
   }
 }
+
+@keyframes blob1 {
+  0%, 100% { transform: translate(0px, 0px) scale(1); }
+  33% { transform: translate(30px, -50px) scale(1.1); }
+  66% { transform: translate(-20px, 20px) scale(0.9); }
+}
+@keyframes blob2 {
+  0%, 100% { transform: translate(0px, 0px) scale(1); }
+  33% { transform: translate(-40px, 60px) scale(1.2); }
+  66% { transform: translate(20px, -30px) scale(0.8); }
+}
+@keyframes blob3 {
+  0%, 100% { transform: translate(0px, 0px) scale(1); }
+  33% { transform: translate(40px, 20px) scale(1.05); }
+  66% { transform: translate(-30px, -40px) scale(0.95); }
+}
+.animate-blob1 { animation: blob1 16s ease-in-out infinite; }
+.animate-blob2 { animation: blob2 18s ease-in-out infinite; }
+.animate-blob3 { animation: blob3 20s ease-in-out infinite; }

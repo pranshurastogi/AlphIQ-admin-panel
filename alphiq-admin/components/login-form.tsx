@@ -27,35 +27,39 @@ export function LoginForm() {
   }
 
   return (
-    <form onSubmit={handle} className="max-w-sm mx-auto space-y-4 p-6 bg-card rounded">
-      <h2 className="text-2xl font-bold">Admin Sign In</h2>
-      {error && <div className="text-red-400 flex items-center"><AlertTriangle className="mr-1"/> {error}</div>}
-      <div>
-        <Label htmlFor="email">Email</Label>
-        <Input
-          id="email" type="email" required
-          value={email} onChange={e=>setEmail(e.target.value)}
-        />
-      </div>
-      <div>
-        <Label htmlFor="pass">Password</Label>
-        <Input
-          id="pass" type="password" required
-          value={pass} onChange={e=>setPass(e.target.value)}
-        />
-      </div>
-      <Button type="submit" disabled={loading} className="w-full">
-        {loading ? 'Signing in…' : 'Sign in'}
-      </Button>
-      <Button
-        variant="link"
-        onClick={() => window.location.href = '/admin/forgot-password'}
-        className="text-sm"
-      >
-        Forgot password?
-      </Button>
-      <div className="pt-4 text-center text-sm">
-        Don't have an account? <a href="/admin/register" className="text-amber">Register</a>
+    <form onSubmit={handle} className="min-h-screen flex items-center justify-center bg-background">
+      <div className="max-w-md w-full p-8 bg-card rounded-xl shadow-lg border border-amber-200">
+        <h2 className="text-3xl font-extrabold mb-6 text-center text-amber">Admin Sign In</h2>
+        {error && <div className="text-red-400 flex items-center mb-4"><AlertTriangle className="mr-1"/> {error}</div>}
+        <div className="mb-4">
+          <Label htmlFor="email">Email</Label>
+          <Input
+            id="email" type="email" required
+            value={email} onChange={e=>setEmail(e.target.value)}
+            className="mt-1"
+          />
+        </div>
+        <div className="mb-6">
+          <Label htmlFor="pass">Password</Label>
+          <Input
+            id="pass" type="password" required
+            value={pass} onChange={e=>setPass(e.target.value)}
+            className="mt-1"
+          />
+        </div>
+        <Button type="submit" disabled={loading} className="w-full text-lg py-3 mb-2">
+          {loading ? 'Signing in…' : 'Sign in'}
+        </Button>
+        <Button
+          variant="link"
+          onClick={() => window.location.href = '/admin/forgot-password'}
+          className="text-sm w-full mb-2"
+        >
+          Forgot password?
+        </Button>
+        <div className="pt-4 text-center text-sm">
+          Don't have an account? <a href="/admin/register" className="text-amber font-semibold">Register</a>
+        </div>
       </div>
     </form>
   )

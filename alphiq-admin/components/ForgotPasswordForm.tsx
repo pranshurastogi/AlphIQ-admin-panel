@@ -26,19 +26,21 @@ export function ForgotPasswordForm() {
   }
 
   return (
-    <form onSubmit={handle} className="max-w-sm mx-auto space-y-4 p-6 bg-card rounded">
-      <h2 className="text-2xl font-bold">Reset Password</h2>
-      {error   && <div className="text-red-400"><AlertTriangle /> {error}</div>}
-      {message && <div className="text-green-400">{message}</div>}
-      <div>
-        <Label>Email</Label>
-        <Input type="email" value={email} onChange={e=>setEmail(e.target.value)} required/>
-      </div>
-      <Button type="submit" disabled={loading} className="w-full">
-        {loading ? 'Sending…' : 'Send reset link'}
-      </Button>
-      <div className="pt-4 text-center text-sm">
-        Remembered? <a href="/admin/login" className="text-amber">Go back to login</a>
+    <form onSubmit={handle} className="min-h-screen flex items-center justify-center bg-background">
+      <div className="max-w-md w-full p-8 bg-card rounded-xl shadow-lg border border-amber-200">
+        <h2 className="text-3xl font-extrabold mb-6 text-center text-amber">Reset Password</h2>
+        {error   && <div className="text-red-400 flex items-center mb-4"><AlertTriangle className="mr-1" /> {error}</div>}
+        {message && <div className="text-green-500 text-center mb-4">{message}</div>}
+        <div className="mb-6">
+          <Label>Email</Label>
+          <Input type="email" value={email} onChange={e=>setEmail(e.target.value)} required className="mt-1"/>
+        </div>
+        <Button type="submit" disabled={loading} className="w-full text-lg py-3 mb-2">
+          {loading ? 'Sending…' : 'Send reset link'}
+        </Button>
+        <div className="pt-4 text-center text-sm">
+          Remembered? <a href="/admin/login" className="text-amber font-semibold">Go back to login</a>
+        </div>
       </div>
     </form>
   )

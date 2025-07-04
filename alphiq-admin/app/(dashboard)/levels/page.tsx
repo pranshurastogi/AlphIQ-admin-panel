@@ -1,289 +1,292 @@
-"use client"
+// app/(dashboard)/levels/page.tsx
+'use client'
 
-import { useState } from "react"
-import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { useState, useEffect } from 'react'
+import { useToast } from '@/hooks/use-toast'
+import { useAuth } from '@/components/auth-provider'
+import { supabase } from '@/lib/supabaseClient'
+import { Button } from '@/components/ui/button'
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription
+} from '@/components/ui/card'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow
+} from '@/components/ui/table'
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Badge } from "@/components/ui/badge"
-import { Plus, Edit, Trash2 } from "lucide-react"
-import { useToast } from "@/hooks/use-toast"
+  DialogDescription,
+  DialogFooter,
+  DialogClose
+} from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Badge } from '@/components/ui/badge'
+import { Plus, Edit, Trash2 } from 'lucide-react'
 
-interface Level {
-  id: string
-  level: number
-  xpMin: number
-  xpMax: number
-  title: string
-  color: string
+type Level = {
+  level:     number
+  name:      string
+  xp_min:    number
+  xp_max:    number
+  color_hex: string
 }
 
-const mockLevels: Level[] = [
-  { id: "1", level: 1, xpMin: 0, xpMax: 999, title: "Newcomer", color: "#6B7280" },
-  { id: "2", level: 2, xpMin: 1000, xpMax: 2499, title: "Explorer", color: "#10B981" },
-  { id: "3", level: 3, xpMin: 2500, xpMax: 4999, title: "Adventurer", color: "#3B82F6" },
-  { id: "4", level: 4, xpMin: 5000, xpMax: 9999, title: "Veteran", color: "#8B5CF6" },
-  { id: "5", level: 5, xpMin: 10000, xpMax: 19999, title: "Expert", color: "#F59E0B" },
-  { id: "6", level: 6, xpMin: 20000, xpMax: 39999, title: "Master", color: "#EF4444" },
-  { id: "7", level: 7, xpMin: 40000, xpMax: 79999, title: "Grandmaster", color: "#EC4899" },
-  { id: "8", level: 8, xpMin: 80000, xpMax: 159999, title: "Legend", color: "#FFC700" },
-  { id: "9", level: 9, xpMin: 160000, xpMax: 999999, title: "Mythic", color: "#00E6B0" },
-]
-
 export default function LevelsPage() {
-  const [levels, setLevels] = useState<Level[]>(mockLevels)
-  const [isCreateOpen, setIsCreateOpen] = useState(false)
-  const [editingLevel, setEditingLevel] = useState<Level | null>(null)
-  const [formData, setFormData] = useState({
-    level: 0,
-    xpMin: 0,
-    xpMax: 0,
-    title: "",
-    color: "#00E6B0",
-  })
+  const { user } = useAuth()
   const { toast } = useToast()
 
-  const validateLevel = (newLevel: Partial<Level>, excludeId?: string) => {
-    const otherLevels = levels.filter((l) => l.id !== excludeId)
+  const [levels,    setLevels]    = useState<Level[]>([])
+  const [loading,   setLoading]   = useState(true)
+  const [error,     setError]     = useState<string|null>(null)
+  const [role,      setRole]      = useState<string|null>(null)
 
-    // Check for overlaps
-    for (const level of otherLevels) {
+  // single form/dialog state
+  const emptyForm: Level = { level:0, name:'', xp_min:0, xp_max:0, color_hex:'#00E6B0' }
+  const [form,      setForm]      = useState<Level>(emptyForm)
+  const [mode,      setMode]      = useState<'create'|'edit'|null>(null)
+  const [submitting,setSubmitting]= useState(false)
+
+  // fetch my admin role
+  useEffect(() => {
+    if (!user) return
+    supabase
+      .from('admin_user_profiles')
+      .select('role')
+      .eq('id', user.id)
+      .single()
+      .then(({ data, error }) => {
+        if (error) console.error('[Levels] role fetch', error)
+        else       setRole(data?.role ?? null)
+      })
+  }, [user])
+
+  // load levels
+  const fetchLevels = async () => {
+    setLoading(true); setError(null)
+    try {
+      const { data, error } = await supabase
+        .from('admin_xp_levels')
+        .select('*').order('level', { ascending: true })
+      if (error) throw error
+      setLevels(data || [])
+    } catch (e:any) {
+      console.error('[Levels] fetch', e)
+      setError('Could not load levels')
+    } finally {
+      setLoading(false)
+    }
+  }
+  useEffect(() => { fetchLevels() }, [])
+
+  // overlap + sanity validation
+  const validate = (v: Level): string|null => {
+    if (v.level <= 0)              return 'Level must be > 0'
+    if (v.xp_min >= v.xp_max)      return 'Min XP must be < Max XP'
+    for (const l of levels) {
+      if (mode==='edit' && l.level===form.level) continue
       if (
-        (newLevel.xpMin! >= level.xpMin && newLevel.xpMin! <= level.xpMax) ||
-        (newLevel.xpMax! >= level.xpMin && newLevel.xpMax! <= level.xpMax) ||
-        (newLevel.xpMin! <= level.xpMin && newLevel.xpMax! >= level.xpMax)
+        (v.xp_min <= l.xp_max && v.xp_min >= l.xp_min) ||
+        (v.xp_max <= l.xp_max && v.xp_max >= l.xp_min) ||
+        (v.xp_min <= l.xp_min && v.xp_max >= l.xp_max)
       ) {
-        return `XP range overlaps with Level ${level.level} (${level.xpMin}-${level.xpMax})`
+        return `XP range overlaps Level ${l.level} (${l.xp_min}–${l.xp_max})`
       }
     }
-
-    if (newLevel.xpMin! >= newLevel.xpMax!) {
-      return "Minimum XP must be less than maximum XP"
-    }
-
     return null
   }
 
-  const handleCreate = () => {
-    const error = validateLevel(formData)
-    if (error) {
-      toast({
-        title: "Validation Error",
-        description: error,
-        variant: "destructive",
-      })
+  // create or update
+  const handleSubmit = async () => {
+    if (role !== 'super_admin') {
+      toast({ title: 'Forbidden', description: 'Only super_admin can do that', variant: 'destructive' })
       return
     }
-
-    const newLevel: Level = {
-      id: Date.now().toString(),
-      ...formData,
-    }
-
-    setLevels([...levels, newLevel].sort((a, b) => a.level - b.level))
-    setFormData({ level: 0, xpMin: 0, xpMax: 0, title: "", color: "#00E6B0" })
-    setIsCreateOpen(false)
-    toast({
-      title: "Level created",
-      description: `Level ${formData.level} "${formData.title}" has been created.`,
-    })
-  }
-
-  const handleEdit = (level: Level) => {
-    setEditingLevel(level)
-    setFormData({
-      level: level.level,
-      xpMin: level.xpMin,
-      xpMax: level.xpMax,
-      title: level.title,
-      color: level.color,
-    })
-  }
-
-  const handleUpdate = () => {
-    if (!editingLevel) return
-
-    const error = validateLevel(formData, editingLevel.id)
-    if (error) {
-      toast({
-        title: "Validation Error",
-        description: error,
-        variant: "destructive",
-      })
+    const err = validate(form)
+    if (err) {
+      toast({ title:'Validation', description:err, variant:'destructive' })
       return
     }
-
-    setLevels(
-      levels
-        .map((level) => (level.id === editingLevel.id ? { ...level, ...formData } : level))
-        .sort((a, b) => a.level - b.level),
-    )
-    setEditingLevel(null)
-    setFormData({ level: 0, xpMin: 0, xpMax: 0, title: "", color: "#00E6B0" })
-    toast({
-      title: "Level updated",
-      description: `Level ${formData.level} has been updated.`,
-    })
+    setSubmitting(true)
+    try {
+      if (mode === 'create') {
+        await supabase.from('admin_xp_levels').insert([form]).throwOnError()
+        toast({ title: 'Created', description: `Level ${form.level} created.` })
+      } else {
+        await supabase
+          .from('admin_xp_levels')
+          .update({
+            name:      form.name,
+            xp_min:    form.xp_min,
+            xp_max:    form.xp_max,
+            color_hex: form.color_hex
+          })
+          .eq('level', form.level)
+          .throwOnError()
+        toast({ title: 'Updated', description: `Level ${form.level} updated.` })
+      }
+      fetchLevels()
+      setMode(null)
+    } catch (e:any) {
+      console.error('[Levels] submit', e)
+      toast({ title:'Error', description:e.message, variant:'destructive' })
+    } finally {
+      setSubmitting(false)
+    }
   }
 
-  const handleDelete = (level: Level) => {
-    setLevels(levels.filter((l) => l.id !== level.id))
-    toast({
-      title: "Level deleted",
-      description: `Level ${level.level} "${level.title}" has been deleted.`,
-    })
+  // delete
+  const handleDelete = async (lvl: Level) => {
+    if (role !== 'super_admin') {
+      toast({ title: 'Forbidden', description: 'Only super_admin can delete', variant: 'destructive' })
+      return
+    }
+    if (!confirm(`Delete Level ${lvl.level}?`)) return
+    try {
+      await supabase.from('admin_xp_levels').delete().eq('level',lvl.level).throwOnError()
+      toast({ title:'Deleted', description:`Level ${lvl.level} deleted.` })
+      fetchLevels()
+    } catch (e:any) {
+      console.error('[Levels] delete', e)
+      toast({ title:'Error', description:e.message, variant:'destructive' })
+    }
   }
+
+  if (loading) return <p className="py-8 text-center">Loading…</p>
+  if (error)   return <p className="py-8 text-center text-red-400">{error}</p>
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-heading font-bold text-primary">XP Levels Configuration</h1>
-          <p className="text-muted-foreground">Define XP thresholds and level progression</p>
-        </div>
-        <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
-          <DialogTrigger asChild>
-            <Button className="bg-primary hover:bg-primary/90">
-              <Plus className="mr-2 h-4 w-4" />
-              Create Level
-            </Button>
-          </DialogTrigger>
-          <DialogContent className="glass-card border-white/10">
-            <DialogHeader>
-              <DialogTitle className="text-primary">Create New Level</DialogTitle>
-              <DialogDescription>Define a new XP level with thresholds and styling.</DialogDescription>
-            </DialogHeader>
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label htmlFor="level">Level Number</Label>
-                  <Input
-                    id="level"
-                    type="number"
-                    value={formData.level}
-                    onChange={(e) => setFormData({ ...formData, level: Number.parseInt(e.target.value) || 0 })}
-                    className="bg-white/5 border-white/10"
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="title">Title</Label>
-                  <Input
-                    id="title"
-                    value={formData.title}
-                    onChange={(e) => setFormData({ ...formData, title: e.target.value })}
-                    placeholder="e.g., Expert"
-                    className="bg-white/5 border-white/10"
-                  />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label htmlFor="xpMin">Minimum XP</Label>
-                  <Input
-                    id="xpMin"
-                    type="number"
-                    value={formData.xpMin}
-                    onChange={(e) => setFormData({ ...formData, xpMin: Number.parseInt(e.target.value) || 0 })}
-                    className="bg-white/5 border-white/10"
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="xpMax">Maximum XP</Label>
-                  <Input
-                    id="xpMax"
-                    type="number"
-                    value={formData.xpMax}
-                    onChange={(e) => setFormData({ ...formData, xpMax: Number.parseInt(e.target.value) || 0 })}
-                    className="bg-white/5 border-white/10"
-                  />
-                </div>
-              </div>
-              <div>
-                <Label htmlFor="color">Color</Label>
-                <div className="flex items-center gap-2">
-                  <Input
-                    id="color"
-                    type="color"
-                    value={formData.color}
-                    onChange={(e) => setFormData({ ...formData, color: e.target.value })}
-                    className="w-16 h-10 bg-white/5 border-white/10"
-                  />
-                  <Input
-                    value={formData.color}
-                    onChange={(e) => setFormData({ ...formData, color: e.target.value })}
-                    placeholder="#00E6B0"
-                    className="bg-white/5 border-white/10"
-                  />
-                </div>
-              </div>
-            </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setIsCreateOpen(false)}>
-                Cancel
-              </Button>
-              <Button onClick={handleCreate} disabled={!formData.title || formData.level === 0}>
-                Create Level
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      </div>
 
-      {/* Level Visualization */}
-      <Card className="glass-card">
-        <CardHeader>
-          <CardTitle className="text-xl font-heading text-primary">Level Progression</CardTitle>
-          <CardDescription>Visual representation of XP level bands</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-2">
-            {levels.map((level) => (
-              <div key={level.id} className="flex items-center gap-4">
-                <div className="w-16 text-center">
-                  <Badge
-                    variant="outline"
-                    style={{ backgroundColor: `${level.color}20`, borderColor: level.color, color: level.color }}
-                  >
-                    L{level.level}
-                  </Badge>
-                </div>
-                <div className="flex-1">
-                  <div
-                    className="h-8 rounded-lg flex items-center px-4 text-white font-medium"
-                    style={{ backgroundColor: level.color }}
-                  >
-                    <span>{level.title}</span>
-                    <span className="ml-auto text-sm opacity-90">
-                      {level.xpMin.toLocaleString()} - {level.xpMax.toLocaleString()} XP
-                    </span>
+      {/* View-only banner */}
+      {role!=='super_admin' && (
+        <p className="p-3 bg-yellow-600/10 text-yellow-400 rounded">
+          View-only — only <strong>super_admin</strong> can edit.
+        </p>
+      )}
+
+      {/* Header & New button */}
+      <div className="flex justify-between items-center">
+        <div>
+          <h1 className="text-3xl font-bold">XP Levels</h1>
+          <p className="text-sm text-neutral-500">Map XP to Levels</p>
+        </div>
+        {role==='super_admin' && (
+          <Dialog
+            open={mode!==null}
+            onOpenChange={o => {
+              console.log('[Dialog] onOpenChange', o, 'mode:', mode)
+              if (!o) setMode(null)
+            }}
+          >
+            <Button
+              variant="default"
+              onClick={() => {
+                console.log('[Create] Clicked')
+                setMode('create')
+                setForm(emptyForm)
+              }}
+            >
+              <Plus className="mr-2" /> New Level
+            </Button>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>
+                  {mode==='create' ? 'Create Level' : `Edit Level ${form.level}`}
+                </DialogTitle>
+                <DialogDescription>
+                  {mode==='create'
+                    ? 'Fill in details'
+                    : 'Update the fields and save.'}
+                </DialogDescription>
+              </DialogHeader>
+
+              {/* Form */}
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label>Level #</Label>
+                    <Input
+                      type="number"
+                      value={form.level}
+                      onChange={e=>setForm({...form,level:+e.target.value})}
+                      disabled={mode==='edit'}
+                    />
+                  </div>
+                  <div>
+                    <Label>Title</Label>
+                    <Input
+                      value={form.name}
+                      onChange={e=>setForm({...form,name:e.target.value})}
+                    />
                   </div>
                 </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label>XP Min</Label>
+                    <Input
+                      type="number"
+                      value={form.xp_min}
+                      onChange={e=>setForm({...form,xp_min:+e.target.value})}
+                    />
+                  </div>
+                  <div>
+                    <Label>XP Max</Label>
+                    <Input
+                      type="number"
+                      value={form.xp_max}
+                      onChange={e=>setForm({...form,xp_max:+e.target.value})}
+                    />
+                  </div>
+                </div>
+                <div>
+                  <Label>Color</Label>
+                  <Input
+                    type="color"
+                    value={form.color_hex}
+                    onChange={e=>setForm({...form,color_hex:e.target.value})}
+                  />
+                </div>
               </div>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
 
-      {/* Levels Table */}
-      <Card className="glass-card">
+              <DialogFooter>
+                <DialogClose asChild>
+                  <Button variant="outline">Cancel</Button>
+                </DialogClose>
+                <Button onClick={handleSubmit} disabled={submitting}>
+                  {submitting
+                    ? 'Saving…'
+                    : mode==='create'
+                      ? 'Create'
+                      : 'Save Changes'}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        )}
+      </div>
+
+      {/* Levels table */}
+      <Card>
         <CardHeader>
-          <CardTitle className="text-xl font-heading text-primary">Level Configuration</CardTitle>
-          <CardDescription>Manage XP thresholds and level properties</CardDescription>
+          <CardTitle>Configured Levels</CardTitle>
+          <CardDescription>XP ↔ Level table</CardDescription>
         </CardHeader>
         <CardContent>
           <Table>
             <TableHeader>
-              <TableRow className="border-white/10">
+              <TableRow>
                 <TableHead>Level</TableHead>
                 <TableHead>Title</TableHead>
                 <TableHead>XP Range</TableHead>
@@ -292,48 +295,46 @@ export default function LevelsPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {levels.map((level) => (
-                <TableRow key={level.id} className="border-white/10 hover:bg-white/5">
+              {levels.map(l=>(
+                <TableRow key={l.level}>
                   <TableCell>
-                    <Badge
-                      variant="outline"
-                      style={{ backgroundColor: `${level.color}20`, borderColor: level.color, color: level.color }}
-                    >
-                      Level {level.level}
-                    </Badge>
+                    <Badge style={{
+                      backgroundColor:`${l.color_hex}20`,
+                      borderColor:l.color_hex,
+                      color:l.color_hex
+                    }}>L{l.level}</Badge>
                   </TableCell>
-                  <TableCell className="font-medium">{level.title}</TableCell>
-                  <TableCell className="font-mono text-sm">
-                    {level.xpMin.toLocaleString()} - {level.xpMax.toLocaleString()}
-                  </TableCell>
+                  <TableCell>{l.name}</TableCell>
+                  <TableCell>{l.xp_min.toLocaleString()} – {l.xp_max.toLocaleString()}</TableCell>
                   <TableCell>
                     <div className="flex items-center gap-2">
-                      <div
-                        className="w-4 h-4 rounded-full border border-white/20"
-                        style={{ backgroundColor: level.color }}
-                      />
-                      <span className="font-mono text-xs">{level.color}</span>
+                      <span className="w-4 h-4 rounded-full" style={{backgroundColor:l.color_hex}}/>
+                      {l.color_hex}
                     </div>
                   </TableCell>
-                  <TableCell className="text-right">
-                    <div className="flex items-center justify-end gap-2">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => handleEdit(level)}
-                        className="hover:bg-primary/10 hover:text-primary"
-                      >
-                        <Edit className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => handleDelete(level)}
-                        className="hover:bg-destructive/10 hover:text-destructive"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
+                  <TableCell className="text-right space-x-2">
+                    {role==='super_admin' ? (
+                      <>
+                        <Button
+                          variant="ghost" size="sm"
+                          onClick={() => {
+                            console.log('[Edit] Clicked', l)
+                            setMode('edit')
+                            setForm(l)
+                          }}
+                        >
+                          <Edit/>
+                        </Button>
+                        <Button
+                          variant="ghost" size="sm"
+                          onClick={() => handleDelete(l)}
+                        >
+                          <Trash2/>
+                        </Button>
+                      </>
+                    ) : (
+                      <span className="text-sm text-neutral-500">—</span>
+                    )}
                   </TableCell>
                 </TableRow>
               ))}
@@ -341,86 +342,6 @@ export default function LevelsPage() {
           </Table>
         </CardContent>
       </Card>
-
-      {/* Edit Dialog */}
-      <Dialog open={!!editingLevel} onOpenChange={() => setEditingLevel(null)}>
-        <DialogContent className="glass-card border-white/10">
-          <DialogHeader>
-            <DialogTitle className="text-primary">Edit Level</DialogTitle>
-            <DialogDescription>Update level configuration and properties.</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label htmlFor="edit-level">Level Number</Label>
-                <Input
-                  id="edit-level"
-                  type="number"
-                  value={formData.level}
-                  onChange={(e) => setFormData({ ...formData, level: Number.parseInt(e.target.value) || 0 })}
-                  className="bg-white/5 border-white/10"
-                />
-              </div>
-              <div>
-                <Label htmlFor="edit-title">Title</Label>
-                <Input
-                  id="edit-title"
-                  value={formData.title}
-                  onChange={(e) => setFormData({ ...formData, title: e.target.value })}
-                  className="bg-white/5 border-white/10"
-                />
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label htmlFor="edit-xpMin">Minimum XP</Label>
-                <Input
-                  id="edit-xpMin"
-                  type="number"
-                  value={formData.xpMin}
-                  onChange={(e) => setFormData({ ...formData, xpMin: Number.parseInt(e.target.value) || 0 })}
-                  className="bg-white/5 border-white/10"
-                />
-              </div>
-              <div>
-                <Label htmlFor="edit-xpMax">Maximum XP</Label>
-                <Input
-                  id="edit-xpMax"
-                  type="number"
-                  value={formData.xpMax}
-                  onChange={(e) => setFormData({ ...formData, xpMax: Number.parseInt(e.target.value) || 0 })}
-                  className="bg-white/5 border-white/10"
-                />
-              </div>
-            </div>
-            <div>
-              <Label htmlFor="edit-color">Color</Label>
-              <div className="flex items-center gap-2">
-                <Input
-                  id="edit-color"
-                  type="color"
-                  value={formData.color}
-                  onChange={(e) => setFormData({ ...formData, color: e.target.value })}
-                  className="w-16 h-10 bg-white/5 border-white/10"
-                />
-                <Input
-                  value={formData.color}
-                  onChange={(e) => setFormData({ ...formData, color: e.target.value })}
-                  className="bg-white/5 border-white/10"
-                />
-              </div>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setEditingLevel(null)}>
-              Cancel
-            </Button>
-            <Button onClick={handleUpdate} disabled={!formData.title || formData.level === 0}>
-              Update Level
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   )
 }
