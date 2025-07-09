@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabaseClient'
 import { useAuth } from '@/components/auth-provider'
@@ -23,6 +23,7 @@ import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { Search, Plus, Edit, Trash2, Info } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import useSWR from 'swr'
 
 interface Quest {
   id: number
@@ -57,11 +58,30 @@ export default function QuestsPage() {
   const [role, setRole] = useState<'super_admin'|'sub_admin'|'moderator'|'viewer'>('viewer')
   const [partnerId, setPartnerId] = useState<string>('')
 
-  const [quests, setQuests] = useState<Quest[]>([])
-  const [categories, setCategories] = useState<Category[]>([])
+  // SWR fetcher for quests and categories
+  const fetchQuestsAndCategories = async () => {
+    const [{ data: cats }, { data: qs }] = await Promise.all([
+      supabase.from('admin_quest_categories').select('id,name'),
+      supabase.from('admin_quests').select('*,admin_quest_categories!inner(name)')
+    ])
+    return {
+      categories: cats || [],
+      quests: (qs || []).map((q: any) => ({
+        ...q,
+        category_name: q.admin_quest_categories.name
+      }))
+    }
+  }
+  const { data: swrData, error: swrError, isLoading: swrLoading, mutate } = useSWR('quests-and-categories', fetchQuestsAndCategories, { revalidateOnFocus: false })
+  const quests = swrData?.quests || []
+  const categories = swrData?.categories || []
+  const loading = swrLoading
+  const error = swrError
+
   const [search, setSearch] = useState('')
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState<Quest|null>(null)
+  const [viewing, setViewing] = useState<Quest|null>(null)
 
   const blank = {
     title: '',
@@ -79,7 +99,9 @@ export default function QuestsPage() {
     comments: ''
   }
   const [form, setForm] = useState<Partial<Quest>>(blank)
-  const [loading, setLoading] = useState(true)
+
+  // Track last fetch time to prevent auto-refresh on tab switch
+  const lastFetchRef = useRef<number>(0)
 
   // 1) Load role & partner_id
   useEffect(() => {
@@ -97,32 +119,7 @@ export default function QuestsPage() {
       })
   }, [user])
 
-  // 2) Fetch categories & quests
-  const fetchAll = async() => {
-    setLoading(true)
-    try {
-      const [{ data: cats, error: e1 }, { data: qs, error: e2 }] = await Promise.all([
-        supabase.from('admin_quest_categories').select('id,name'),
-        supabase.from('admin_quests')
-          .select(`
-            *,
-            admin_quest_categories!inner(name)
-          `)
-      ])
-      if (e1||e2) throw e1||e2
-      setCategories(cats||[])
-      setQuests((qs||[]).map((q:any)=>({
-        ...q,
-        category_name: q.admin_quest_categories.name
-      })))
-    } catch (e:any) {
-      console.error(e)
-      toast({ title:'Load error', description:e.message, variant:'destructive' })
-    } finally {
-      setLoading(false)
-    }
-  }
-  useEffect(() => { fetchAll() }, [])
+  // Remove fetchAll and useSWR handles fetching
 
   // 3) Open dialog
   const openNew = () => {
@@ -186,7 +183,7 @@ export default function QuestsPage() {
         description: editing?`#${editing.id}`:'new quest'
       })
       setDialogOpen(false)
-      fetchAll()
+      mutate() // revalidate SWR cache
     } catch (e:any) {
       console.error(e)
       toast({ title:'Save failed', description:e.message, variant:'destructive' })
@@ -203,7 +200,7 @@ export default function QuestsPage() {
         .eq('id', q.id)
       if (error) throw error
       toast({ title:'Deleted', description:`#${q.id}` })
-      fetchAll()
+      mutate() // revalidate SWR cache
     } catch (e:any) {
       console.error(e)
       toast({ title:'Delete failed', description:e.message, variant:'destructive' })
@@ -216,6 +213,7 @@ export default function QuestsPage() {
   )
 
   return (
+    <TooltipProvider>
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <div>
@@ -261,38 +259,42 @@ export default function QuestsPage() {
                 const canEdit =
                   role==='super_admin' ||
                   (role==='sub_admin' && q.partner_id===partnerId)
-                return (
-                  <TableRow key={q.id}>
-                    <TableCell>{q.title}</TableCell>
-                    <TableCell>
-                      <Badge variant="outline">{q.category_name}</Badge>
-                    </TableCell>
-                    <TableCell>{q.xp_reward}</TableCell>
-                    <TableCell>
-                      {q.is_active
-                        ? <Badge variant="secondary">Yes</Badge>
-                        : <Badge variant="outline">No</Badge>}
-                    </TableCell>
-                    <TableCell>
-                      {q.start_at} → {q.end_at||'–'}
-                    </TableCell>
-                    <TableCell>
-                      {q.prerequisites.length? q.prerequisites.join(','):'None'}
-                    </TableCell>
-                    <TableCell className="space-x-2">
-                      {canEdit
-                        ? <>
-                            <Button size="sm" variant="ghost" onClick={()=>openEdit(q)}>
-                              <Edit/>
-                            </Button>
-                            <Button size="sm" variant="ghost" onClick={()=>handleDelete(q)}>
-                              <Trash2/>
-                            </Button>
-                          </>
-                        : <span className="text-sm text-muted-foreground">—</span>}
-                    </TableCell>
-                  </TableRow>
-                )
+               return (
+                 <TableRow key={q.id} className="cursor-pointer hover:bg-muted/40 group" onClick={e => {
+                   // Prevent row click if clicking on action buttons
+                   if ((e.target as HTMLElement).closest('button')) return;
+                   setViewing(q)
+                 }}>
+                   <TableCell className="font-medium group-hover:underline">{q.title}</TableCell>
+                   <TableCell>
+                     <Badge variant="outline">{q.category_name}</Badge>
+                   </TableCell>
+                   <TableCell>{q.xp_reward}</TableCell>
+                   <TableCell>
+                     {q.is_active
+                       ? <Badge variant="secondary">Yes</Badge>
+                       : <Badge variant="outline">No</Badge>}
+                   </TableCell>
+                   <TableCell>
+                     {q.start_at} → {q.end_at||'–'}
+                   </TableCell>
+                   <TableCell>
+                     {q.prerequisites.length? q.prerequisites.join(','):'None'}
+                   </TableCell>
+                   <TableCell className="space-x-2" onClick={e => e.stopPropagation()}>
+                     {canEdit
+                       ? <>
+                           <Button size="sm" variant="ghost" onClick={()=>openEdit(q)}>
+                             <Edit/>
+                           </Button>
+                           <Button size="sm" variant="ghost" onClick={()=>handleDelete(q)}>
+                             <Trash2/>
+                           </Button>
+                         </>
+                       : <span className="text-sm text-muted-foreground">—</span>}
+                   </TableCell>
+                 </TableRow>
+               )
               })}
             </TableBody>
           </Table>
@@ -452,16 +454,16 @@ export default function QuestsPage() {
               </div>
               <div>
                 <Label>Prereqs
-                  <TooltipProvider>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <span className="ml-1 align-middle cursor-pointer"><Info size={14}/></span>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        <span>Quest IDs that must be completed before this quest is available. Enter one or more quest IDs, separated by commas. (A multi-select UI can be implemented if needed.)</span>
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button type="button" tabIndex={0} className="ml-1 align-middle cursor-pointer p-0 bg-transparent border-0">
+                        <Info size={14}/>
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <span>Quest IDs that must be completed before this quest is available. Enter one or more quest IDs, separated by commas. (A multi-select UI can be implemented if needed.)</span>
+                    </TooltipContent>
+                  </Tooltip>
                 </Label>
                 {/* TODO: Replace with a true multi-select if available in your UI library */}
                 <Input
@@ -480,24 +482,24 @@ export default function QuestsPage() {
 
             <div>
               <Label>Meta (JSON)
-                <TooltipProvider>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <span className="ml-1 align-middle cursor-pointer"><Info size={14}/></span>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <span>
-                        Stores any extra, free-form data you might want to attach to a quest:<br/>
-                        – Icons or image URLs<br/>
-                        – Tags or categories beyond the single category_id (e.g. ["defi","nft","twitter"])<br/>
-                        – Links to external docs or guides<br/>
-                        – Anything else that doesn’t merit its own strongly-typed column<br/>
-                        <br/>
-                        Because it’s JSONB, you can index particular keys or even add a GIN index over the whole JSON if you need to query on, say, meta-&gt;&gt;'tags'.
-                      </span>
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button type="button" tabIndex={0} className="ml-1 align-middle cursor-pointer p-0 bg-transparent border-0">
+                      <Info size={14}/>
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <span>
+                      Stores any extra, free-form data you might want to attach to a quest:<br/>
+                      – Icons or image URLs<br/>
+                      – Tags or categories beyond the single category_id (e.g. ["defi","nft","twitter"])<br/>
+                      – Links to external docs or guides<br/>
+                      – Anything else that doesn’t merit its own strongly-typed column<br/>
+                      <br/>
+                      Because it’s JSONB, you can index particular keys or even add a GIN index over the whole JSON if you need to query on, say, meta-&gt;&gt;'tags'.
+                    </span>
+                  </TooltipContent>
+                </Tooltip>
               </Label>
               <Textarea
                 rows={3}
@@ -539,6 +541,97 @@ export default function QuestsPage() {
           </form>
         </DialogContent>
       </Dialog>
+
+      {/* Quest Detail Dialog */}
+      <Dialog open={!!viewing} onOpenChange={open => setViewing(open ? viewing : null)}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Quest Details</DialogTitle>
+            <DialogDescription>
+              View all information about this quest.
+            </DialogDescription>
+          </DialogHeader>
+          {viewing && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <h2 className="text-2xl font-bold">{viewing.title}</h2>
+                { (role==='super_admin' || (role==='sub_admin' && viewing.partner_id===partnerId)) && (
+                  <Button size="sm" variant="outline" onClick={()=>{ setViewing(null); openEdit(viewing); }}>Edit</Button>
+                )}
+              </div>
+              <div className="text-muted-foreground">ID: {viewing.id}</div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <div className="font-semibold">Category</div>
+                  <Badge>{viewing.category_name}</Badge>
+                </div>
+                <div>
+                  <div className="font-semibold">XP Reward</div>
+                  {viewing.xp_reward}
+                </div>
+                <div>
+                  <div className="font-semibold">Multiplier</div>
+                  {viewing.multiplier}
+                </div>
+                <div>
+                  <div className="font-semibold">Multiplier Window</div>
+                  {viewing.multiplier_start ? viewing.multiplier_start.slice(0,10) : '—'} → {viewing.multiplier_end ? viewing.multiplier_end.slice(0,10) : '—'}
+                </div>
+                <div>
+                  <div className="font-semibold">Start Date</div>
+                  {viewing.start_at}
+                </div>
+                <div>
+                  <div className="font-semibold">End Date</div>
+                  {viewing.end_at || '—'}
+                </div>
+                <div>
+                  <div className="font-semibold">Active?</div>
+                  {viewing.is_active ? <Badge variant="secondary">Yes</Badge> : <Badge variant="outline">No</Badge>}
+                </div>
+                <div>
+                  <div className="font-semibold">Created By</div>
+                  {viewing.created_by}
+                </div>
+                <div>
+                  <div className="font-semibold">Partner ID</div>
+                  {viewing.partner_id}
+                </div>
+              </div>
+              <div>
+                <div className="font-semibold mb-1">Description</div>
+                <div className="whitespace-pre-line">{viewing.description}</div>
+              </div>
+              <div>
+                <div className="font-semibold mb-1">Prerequisites</div>
+                {viewing.prerequisites && viewing.prerequisites.length
+                  ? <div className="flex flex-wrap gap-2">{viewing.prerequisites.map(id => (
+                      <Badge key={id} variant="outline">ID: {id}</Badge>
+                    ))}</div>
+                  : <span className="text-muted-foreground">None</span>}
+              </div>
+              <div>
+                <div className="font-semibold mb-1">Meta</div>
+                <pre className="bg-muted rounded p-2 text-xs overflow-x-auto">{JSON.stringify(viewing.meta, null, 2)}</pre>
+              </div>
+              {viewing.comments && (
+                <div>
+                  <div className="font-semibold mb-1">Comments</div>
+                  <div className="whitespace-pre-line">{viewing.comments}</div>
+                </div>
+              )}
+              <div className="text-xs text-muted-foreground mt-2">
+                Created: {viewing.created_at} <br/>
+                Updated: {viewing.updated_at}
+              </div>
+              <div className="flex justify-end">
+                <Button variant="outline" onClick={()=>setViewing(null)}>Close</Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
+    </TooltipProvider>
   )
 }
