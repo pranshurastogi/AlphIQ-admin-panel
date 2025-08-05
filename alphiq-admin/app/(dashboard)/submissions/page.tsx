@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -35,8 +35,17 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import {
   Check,
   X,
@@ -44,156 +53,309 @@ import {
   Search,
   Filter,
   ExternalLink,
+  Clock,
+  Award,
+  AlertCircle,
+  CheckCircle,
+  XCircle,
+  Download,
+  Image as ImageIcon,
+  FileText,
+  Link,
+  Calendar,
+  User,
+  Trophy,
+  Star,
+  RefreshCw,
+  AlertTriangle,
 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
+import { useAuth } from "@/components/auth-provider"
+import { supabase } from "@/lib/supabaseClient"
 
 interface Submission {
-  id: string
-  userAddress: string
-  questTitle: string
-  submittedAt: string
-  proofLink: string
-  proofType: "transaction" | "file" | "url"
+  id: number
+  quest_id: number
+  user_address: string
+  proof_url: string
+  proof_data: any
+  submitted_at: string
   status: "pending" | "approved" | "rejected"
-  reviewNotes?: string
-  xpReward: number
+  reviewed_by: string | null
+  reviewed_at: string | null
+  review_notes: string | null
+  quest: {
+    id: number
+    title: string
+    description: string
+    xp_reward: number
+    multiplier: number
+    category_id: number
+    created_by: string
+    is_active: boolean
+    category: {
+      id: number
+      name: string
+    }
+    creator?: {
+      full_name: string
+    }
+  }
 }
 
-const mockSubmissions: Submission[] = [
-  {
-    id: "1",
-    userAddress: "0x1234...5678",
-    questTitle: "Complete DeFi Swap on Uniswap",
-    submittedAt: "2024-01-20T10:30:00Z",
-    proofLink: "0xabc123...def456",
-    proofType: "transaction",
-    status: "pending",
-    xpReward: 500,
-  },
-  {
-    id: "2",
-    userAddress: "0x2345...6789",
-    questTitle: "Mint Your First NFT",
-    submittedAt: "2024-01-19T15:45:00Z",
-    proofLink: "https://opensea.io/assets/...",
-    proofType: "url",
-    status: "approved",
-    reviewNotes: "Valid NFT mint transaction confirmed",
-    xpReward: 300,
-  },
-  {
-    id: "3",
-    userAddress: "0x3456...7890",
-    questTitle: "Share on Twitter",
-    submittedAt: "2024-01-19T09:15:00Z",
-    proofLink: "https://twitter.com/user/status/...",
-    proofType: "url",
-    status: "rejected",
-    reviewNotes: "Tweet does not contain required hashtags",
-    xpReward: 100,
-  },
-  {
-    id: "4",
-    userAddress: "0x4567...8901",
-    questTitle: "Complete Web3 Tutorial",
-    submittedAt: "2024-01-18T14:20:00Z",
-    proofLink: "certificate.pdf",
-    proofType: "file",
-    status: "pending",
-    xpReward: 750,
-  },
-]
+interface SubmissionStats {
+  total: number
+  pending: number
+  approved: number
+  rejected: number
+}
 
 export default function SubmissionsPage() {
-  const [submissions, setSubmissions] =
-    useState<Submission[]>(mockSubmissions)
+  const { profile, hasPermission } = useAuth()
+  const [submissions, setSubmissions] = useState<Submission[]>([])
+  const [loading, setLoading] = useState(true)
   const [searchTerm, setSearchTerm] = useState("")
   const [statusFilter, setStatusFilter] = useState<string>("all")
-  const [selectedSubmissions, setSelectedSubmissions] =
-    useState<string[]>([])
-  const [reviewingSubmission, setReviewingSubmission] =
-    useState<Submission | null>(null)
+  const [categoryFilter, setCategoryFilter] = useState<string>("all")
+  const [createdByFilter, setCreatedByFilter] = useState<string>("all")
+  const [questFilter, setQuestFilter] = useState<string>("all")
+  const [selectedSubmissions, setSelectedSubmissions] = useState<number[]>([])
+  const [reviewingSubmission, setReviewingSubmission] = useState<Submission | null>(null)
   const [reviewNotes, setReviewNotes] = useState("")
+  const [stats, setStats] = useState<SubmissionStats>({
+    total: 0,
+    pending: 0,
+    approved: 0,
+    rejected: 0,
+  })
+  const [isReviewing, setIsReviewing] = useState(false)
   const { toast } = useToast()
+
+  // Fetch submissions based on user role - using direct Supabase access like quests page
+  const fetchSubmissions = async () => {
+    if (!profile) return
+
+    setLoading(true)
+    try {
+      let query = supabase
+        .from('admin_quest_submissions')
+        .select(`
+          *,
+          quest:admin_quests(
+            id,
+            title,
+            description,
+            xp_reward,
+            multiplier,
+            category_id,
+            created_by,
+            is_active,
+            category:admin_quest_categories(id, name),
+            creator:admin_user_profiles!admin_quests_created_by_fkey(full_name)
+          )
+        `)
+        .order('submitted_at', { ascending: false })
+
+      // Apply role-based filtering - same logic as quests page
+      if (profile.role !== 'super_admin') {
+        // Non-super admins can only see submissions for quests they created
+        query = query.eq('quest.created_by', profile.id)
+      }
+
+      const { data: submissions, error } = await query
+
+      if (error) {
+        console.error('Error fetching submissions:', error)
+        toast({
+          title: "Error",
+          description: "Failed to load submissions",
+          variant: "destructive",
+        })
+        return
+      }
+
+      setSubmissions(submissions || [])
+      
+      // Calculate stats
+      const stats = {
+        total: submissions?.length || 0,
+        pending: submissions?.filter((s: Submission) => s.status === 'pending').length || 0,
+        approved: submissions?.filter((s: Submission) => s.status === 'approved').length || 0,
+        rejected: submissions?.filter((s: Submission) => s.status === 'rejected').length || 0,
+      }
+      setStats(stats)
+    } catch (error) {
+      console.error('Error fetching submissions:', error)
+      toast({
+        title: "Error",
+        description: "Failed to load submissions",
+        variant: "destructive",
+      })
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    fetchSubmissions()
+  }, [profile])
 
   const filteredSubmissions = submissions.filter((submission) => {
     const matchesSearch =
-      submission.userAddress
-        .toLowerCase()
-        .includes(searchTerm.toLowerCase()) ||
-      submission.questTitle
-        .toLowerCase()
-        .includes(searchTerm.toLowerCase())
-    const matchesStatus =
-      statusFilter === "all" ||
-      submission.status === statusFilter
-    return matchesSearch && matchesStatus
+      submission.user_address.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      submission.quest.title.toLowerCase().includes(searchTerm.toLowerCase())
+    const matchesStatus = statusFilter === "all" || submission.status === statusFilter
+    const matchesCategory = categoryFilter === "all" || submission.quest.category?.name === categoryFilter
+    const matchesCreatedBy = createdByFilter === "all" || submission.quest.created_by === createdByFilter
+    const matchesQuest = questFilter === "all" || submission.quest_id.toString() === questFilter
+    return matchesSearch && matchesStatus && matchesCategory && matchesCreatedBy && matchesQuest
   })
 
-  const handleSelectSubmission = (
-    submissionId: string,
-    checked: boolean
-  ) => {
+  const handleSelectSubmission = (submissionId: number, checked: boolean) => {
     if (checked) {
-      setSelectedSubmissions([
-        ...selectedSubmissions,
-        submissionId,
-      ])
+      setSelectedSubmissions([...selectedSubmissions, submissionId])
     } else {
-      setSelectedSubmissions(
-        selectedSubmissions.filter((id) => id !== submissionId)
-      )
+      setSelectedSubmissions(selectedSubmissions.filter((id) => id !== submissionId))
     }
   }
 
   const handleSelectAll = (checked: boolean) => {
     if (checked) {
-      setSelectedSubmissions(
-        filteredSubmissions.map((s) => s.id)
-      )
+      setSelectedSubmissions(filteredSubmissions.map((s) => s.id))
     } else {
       setSelectedSubmissions([])
     }
   }
 
-  const handleReview = (
-    submission: Submission,
-    status: "approved" | "rejected"
-  ) => {
-    setSubmissions(
-      submissions.map((s) =>
+  const handleReview = async (submission: Submission, status: "approved" | "rejected") => {
+    if (!profile) return
+
+    setIsReviewing(true)
+    try {
+      // Check permissions - same logic as quests page
+      if (profile.role !== 'super_admin' && submission.quest.created_by !== profile.id) {
+        toast({
+          title: "Error",
+          description: "Insufficient permissions to review this submission",
+          variant: "destructive",
+        })
+        return
+      }
+
+      const { error } = await supabase
+        .from('admin_quest_submissions')
+        .update({
+          status,
+          reviewed_by: profile.id,
+          reviewed_at: new Date().toISOString(),
+          review_notes: reviewNotes,
+        })
+        .eq('id', submission.id)
+
+      if (error) {
+        throw error
+      }
+
+      // Update local state
+      setSubmissions(submissions.map((s) =>
         s.id === submission.id
-          ? { ...s, status, reviewNotes }
+          ? {
+              ...s,
+              status,
+              reviewed_by: profile.id,
+              reviewed_at: new Date().toISOString(),
+              review_notes: reviewNotes,
+            }
           : s
-      )
-    )
-    setReviewingSubmission(null)
-    setReviewNotes("")
-    toast({
-      title: `Submission ${status}`,
-      description: `${submission.questTitle} submission has been ${status}.`,
-    })
+      ))
+
+      setReviewingSubmission(null)
+      setReviewNotes("")
+      
+      toast({
+        title: `Submission ${status}`,
+        description: `${submission.quest.title} submission has been ${status}.`,
+      })
+
+      // Refresh stats
+      fetchSubmissions()
+    } catch (error) {
+      console.error('Error reviewing submission:', error)
+      toast({
+        title: "Error",
+        description: "Failed to update submission",
+        variant: "destructive",
+      })
+    } finally {
+      setIsReviewing(false)
+    }
   }
 
-  const handleBatchAction = (action: "approve" | "reject") => {
-    const updatedSubmissions = submissions.map((s) =>
-      selectedSubmissions.includes(s.id) &&
-      s.status === "pending"
-        ? {
-            ...s,
-            status:
-              action === "approve"
-                ? "approved"
-                : "rejected",
-          }
-        : s
-    )
-    setSubmissions(updatedSubmissions)
-    setSelectedSubmissions([])
-    toast({
-      title: `Batch ${action}`,
-      description: `${selectedSubmissions.length} submissions have been ${action}d.`,
-    })
+  const handleBatchAction = async (action: "approve" | "reject") => {
+    if (!profile || selectedSubmissions.length === 0) return
+
+    setIsReviewing(true)
+    try {
+      // Check permissions for all selected submissions
+      const selectedSubs = submissions.filter(s => selectedSubmissions.includes(s.id))
+      const unauthorizedSubs = selectedSubs.filter(s => 
+        profile.role !== 'super_admin' && s.quest.created_by !== profile.id
+      )
+
+      if (unauthorizedSubs.length > 0) {
+        toast({
+          title: "Error",
+          description: "Insufficient permissions for some submissions",
+          variant: "destructive",
+        })
+        return
+      }
+
+      const { error } = await supabase
+        .from('admin_quest_submissions')
+        .update({
+          status: action === "approve" ? "approved" : "rejected",
+          reviewed_by: profile.id,
+          reviewed_at: new Date().toISOString(),
+        })
+        .in('id', selectedSubmissions)
+        .eq('status', 'pending')
+
+      if (error) {
+        throw error
+      }
+
+      // Update local state
+      setSubmissions(submissions.map((s) =>
+        selectedSubmissions.includes(s.id) && s.status === 'pending'
+          ? {
+              ...s,
+              status: action === "approve" ? "approved" : "rejected",
+              reviewed_by: profile.id,
+              reviewed_at: new Date().toISOString(),
+            }
+          : s
+      ))
+
+      setSelectedSubmissions([])
+      
+      toast({
+        title: `Batch ${action}`,
+        description: `${selectedSubmissions.length} submissions have been ${action}d.`,
+      })
+
+      // Refresh stats
+      fetchSubmissions()
+    } catch (error) {
+      console.error('Error batch updating submissions:', error)
+      toast({
+        title: "Error",
+        description: "Failed to update submissions",
+        variant: "destructive",
+      })
+    } finally {
+      setIsReviewing(false)
+    }
   }
 
   const getStatusColor = (status: string) => {
@@ -209,50 +371,202 @@ export default function SubmissionsPage() {
     }
   }
 
+  const getStatusIcon = (status: string) => {
+    switch (status) {
+      case "approved":
+        return <CheckCircle className="h-4 w-4" />
+      case "pending":
+        return <Clock className="h-4 w-4" />
+      case "rejected":
+        return <XCircle className="h-4 w-4" />
+      default:
+        return <AlertCircle className="h-4 w-4" />
+    }
+  }
+
   const formatDate = (dateString: string) => {
-    return (
-      new Date(dateString).toLocaleDateString() +
+    return new Date(dateString).toLocaleDateString() +
       " " +
       new Date(dateString).toLocaleTimeString([], {
         hour: "2-digit",
         minute: "2-digit",
       })
+  }
+
+  const getProofTypeIcon = (proofUrl: string) => {
+    if (proofUrl.startsWith('http')) {
+      return <Link className="h-4 w-4" />
+    } else if (proofUrl.includes('.jpg') || proofUrl.includes('.png') || proofUrl.includes('.jpeg')) {
+      return <ImageIcon className="h-4 w-4" />
+    } else {
+      return <FileText className="h-4 w-4" />
+    }
+  }
+
+  const renderProofData = (proofData: any) => {
+    if (!proofData) return null
+
+    // Check if proof_data contains image URLs
+    const imageUrls: string[] = []
+    
+    const findImageUrls = (obj: any): void => {
+      if (typeof obj === 'string') {
+        // Check if it's an image URL
+        if (obj.match(/\.(jpg|jpeg|png|gif|webp|svg)$/i) || obj.startsWith('data:image/')) {
+          imageUrls.push(obj)
+        }
+      } else if (typeof obj === 'object' && obj !== null) {
+        Object.values(obj).forEach(findImageUrls)
+      }
+    }
+    
+    findImageUrls(proofData)
+
+    if (imageUrls.length > 0) {
+      return (
+        <div className="space-y-4">
+          <Label className="text-sm font-medium">Images Found</Label>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {imageUrls.map((url, index) => (
+              <div key={index} className="space-y-2">
+                <img 
+                  src={url} 
+                  alt={`Proof image ${index + 1}`}
+                  className="w-full h-48 object-cover rounded-lg border"
+                  onError={(e) => {
+                    e.currentTarget.style.display = 'none'
+                  }}
+                />
+                <p className="text-xs text-muted-foreground truncate">{url}</p>
+              </div>
+            ))}
+          </div>
+          <div>
+            <Label className="text-sm font-medium">Raw Data</Label>
+            <div className="mt-1 p-3 bg-muted rounded-lg border">
+              <pre className="text-xs overflow-auto max-h-32 whitespace-pre-wrap">
+                {JSON.stringify(proofData, null, 2)}
+              </pre>
+            </div>
+          </div>
+        </div>
+      )
+    }
+
+    // If no images, show as regular JSON
+    return (
+      <div>
+        <Label className="text-sm font-medium">Proof Data</Label>
+        <div className="mt-1 p-3 bg-muted rounded-lg border">
+          <pre className="text-xs overflow-auto max-h-64 whitespace-pre-wrap">
+            {JSON.stringify(proofData, null, 2)}
+          </pre>
+        </div>
+      </div>
+    )
+  }
+
+  const canReviewSubmission = (submission: Submission) => {
+    if (!profile) return false
+    
+    // Super admin can review all submissions
+    if (profile.role === 'super_admin') return true
+    
+    // Other roles can only review submissions for quests they created
+    return submission.quest.created_by === profile.id
+  }
+
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-bold">Submissions Review</h1>
+            <p className="text-muted-foreground">
+              Review and approve quest submissions from users
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center justify-center h-64">
+          <RefreshCw className="h-8 w-8 animate-spin text-muted-foreground" />
+        </div>
+      </div>
     )
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 max-w-7xl mx-auto">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold">
-            Submissions Review
-          </h1>
+          <h1 className="text-3xl font-bold">Submissions Review</h1>
           <p className="text-muted-foreground">
             Review and approve quest submissions from users
           </p>
         </div>
-        {selectedSubmissions.length > 0 && (
-          <div className="flex gap-2">
-            <Button
-              variant="outline"
-              onClick={() => handleBatchAction("approve")}
-              className="bg-green-50 hover:bg-green-100 text-green-700 border-green-200"
-            >
-              <Check className="mr-2 h-4 w-4" />
-              Approve Selected (
-              {selectedSubmissions.length})
-            </Button>
-            <Button
-              variant="outline"
-              onClick={() => handleBatchAction("reject")}
-              className="bg-red-50 hover:bg-red-100 text-red-700 border-red-200"
-            >
-              <X className="mr-2 h-4 w-4" />
-              Reject Selected (
-              {selectedSubmissions.length})
-            </Button>
-          </div>
-        )}
+        <Button
+          variant="outline"
+          onClick={fetchSubmissions}
+          disabled={loading}
+        >
+          <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
+          Refresh
+        </Button>
+      </div>
+
+      {/* Stats Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <Card>
+          <CardContent className="p-6">
+            <div className="flex items-center space-x-2">
+              <div className="p-2 bg-blue-100 rounded-lg">
+                <Trophy className="h-4 w-4 text-blue-600" />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-muted-foreground">Total</p>
+                <p className="text-2xl font-bold">{stats.total}</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-6">
+            <div className="flex items-center space-x-2">
+              <div className="p-2 bg-yellow-100 rounded-lg">
+                <Clock className="h-4 w-4 text-yellow-600" />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-muted-foreground">Pending</p>
+                <p className="text-2xl font-bold">{stats.pending}</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-6">
+            <div className="flex items-center space-x-2">
+              <div className="p-2 bg-green-100 rounded-lg">
+                <CheckCircle className="h-4 w-4 text-green-600" />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-muted-foreground">Approved</p>
+                <p className="text-2xl font-bold">{stats.approved}</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-6">
+            <div className="flex items-center space-x-2">
+              <div className="p-2 bg-red-100 rounded-lg">
+                <XCircle className="h-4 w-4 text-red-600" />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-muted-foreground">Rejected</p>
+                <p className="text-2xl font-bold">{stats.rejected}</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
       </div>
 
       <Card>
@@ -261,257 +575,494 @@ export default function SubmissionsPage() {
           <CardDescription>
             Review quest submissions and manage approvals
           </CardDescription>
-          <div className="flex flex-col sm:flex-row gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
             <div className="flex items-center space-x-2">
               <Search className="h-4 w-4 text-muted-foreground" />
               <Input
                 placeholder="Search by user or quest..."
                 value={searchTerm}
-                onChange={(e) =>
-                  setSearchTerm(e.target.value)
-                }
-                className="max-w-sm"
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full"
               />
             </div>
             <div className="flex items-center space-x-2">
               <Filter className="h-4 w-4 text-muted-foreground" />
-              <Select
-                value={statusFilter}
-                onValueChange={setStatusFilter}
-              >
-                <SelectTrigger className="w-[140px]">
+              <Select value={statusFilter} onValueChange={setStatusFilter}>
+                <SelectTrigger className="w-full">
                   <SelectValue placeholder="Status" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">
-                    All Status
-                  </SelectItem>
-                  <SelectItem value="pending">
-                    Pending
-                  </SelectItem>
-                  <SelectItem value="approved">
-                    Approved
-                  </SelectItem>
-                  <SelectItem value="rejected">
-                    Rejected
-                  </SelectItem>
+                  <SelectItem value="all">All Status</SelectItem>
+                  <SelectItem value="pending">Pending</SelectItem>
+                  <SelectItem value="approved">Approved</SelectItem>
+                  <SelectItem value="rejected">Rejected</SelectItem>
                 </SelectContent>
               </Select>
             </div>
+            <div className="flex items-center space-x-2">
+              <Filter className="h-4 w-4 text-muted-foreground" />
+              <Select value={questFilter} onValueChange={setQuestFilter}>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Quest" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Quests</SelectItem>
+                  {Array.from(
+                    new Map(submissions.map(s => [s.quest_id, { id: s.quest_id, title: s.quest.title }])).values()
+                  ).map(quest => (
+                    <SelectItem key={quest.id} value={quest.id.toString()}>
+                      {quest.title.length > 30 ? quest.title.slice(0, 30) + '...' : quest.title}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex items-center space-x-2">
+              <Filter className="h-4 w-4 text-muted-foreground" />
+              <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Category" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Categories</SelectItem>
+                  {Array.from(new Set(submissions.map(s => s.quest.category?.name).filter(Boolean))).map(category => (
+                    <SelectItem key={category} value={category!}>
+                      {category}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex items-center space-x-2">
+              <Filter className="h-4 w-4 text-muted-foreground" />
+              <Select value={createdByFilter} onValueChange={setCreatedByFilter}>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Created By" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Creators</SelectItem>
+                  {Array.from(new Set(submissions.map(s => s.quest.created_by))).map(creator => {
+                    const creatorSubmission = submissions.find(s => s.quest.created_by === creator)
+                    const creatorName = creatorSubmission?.quest.creator?.full_name || creator.slice(0, 8) + '...' + creator.slice(-6)
+                    return (
+                      <SelectItem key={creator} value={creator}>
+                        {creatorName}
+                      </SelectItem>
+                    )
+                  })}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex justify-end mt-4">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setSearchTerm("")
+                  setStatusFilter("all")
+                  setCategoryFilter("all")
+                  setCreatedByFilter("all")
+                  setQuestFilter("all")
+                }}
+              >
+                Clear Filters
+              </Button>
+            </div>
           </div>
         </CardHeader>
-        <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-12">
-                  <Checkbox
-                    checked={
-                      selectedSubmissions.length ===
-                        filteredSubmissions.length &&
-                      filteredSubmissions.length > 0
-                    }
-                    onCheckedChange={handleSelectAll}
-                  />
-                </TableHead>
-                <TableHead>User</TableHead>
-                <TableHead>Quest</TableHead>
-                <TableHead>Submitted</TableHead>
-                <TableHead>Proof</TableHead>
-                <TableHead>XP</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead className="text-right">
-                  Actions
-                </TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filteredSubmissions.map((submission) => (
-                <TableRow key={submission.id}>
-                  <TableCell>
+        <CardContent className="overflow-x-auto">
+          {selectedSubmissions.length > 0 && (
+            <div className="mb-4 p-4 bg-muted rounded-lg">
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-medium">
+                  {selectedSubmissions.length} submission(s) selected
+                </p>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    onClick={() => handleBatchAction("approve")}
+                    disabled={isReviewing}
+                    className="bg-green-50 hover:bg-green-100 text-green-700 border-green-200"
+                  >
+                    <Check className="mr-2 h-4 w-4" />
+                    Approve Selected
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => handleBatchAction("reject")}
+                    disabled={isReviewing}
+                    className="bg-red-50 hover:bg-red-100 text-red-700 border-red-200"
+                  >
+                    <X className="mr-2 h-4 w-4" />
+                    Reject Selected
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="min-w-[1200px]">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-12">
                     <Checkbox
-                      checked={selectedSubmissions.includes(
-                        submission.id
-                      )}
-                      onCheckedChange={(checked) =>
-                        handleSelectSubmission(
-                          submission.id,
-                          checked as boolean
-                        )
+                      checked={
+                        selectedSubmissions.length === filteredSubmissions.length &&
+                        filteredSubmissions.length > 0
                       }
+                      onCheckedChange={handleSelectAll}
                     />
-                  </TableCell>
-                  <TableCell className="font-mono text-sm">
-                    {submission.userAddress}
-                  </TableCell>
-                  <TableCell className="max-w-xs">
-                    <div className="truncate">
-                      {submission.questTitle}
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-sm">
-                    {formatDate(submission.submittedAt)}
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex items-center gap-2">
-                      <Badge
-                        variant="outline"
-                        className="text-xs"
-                      >
-                        {submission.proofType}
-                      </Badge>
-                      {submission.proofType === "url" && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          asChild
-                        >
-                          <a
-                            href={submission.proofLink}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                          >
-                            <ExternalLink className="h-3 w-3" />
-                          </a>
-                        </Button>
-                      )}
-                    </div>
-                  </TableCell>
-                  <TableCell className="font-mono">
-                    {submission.xpReward} XP
-                  </TableCell>
-                  <TableCell>
-                    <Badge
-                      variant={getStatusColor(
-                        submission.status
-                      )}
-                      className="capitalize"
-                    >
-                      {submission.status}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <div className="flex items-center justify-end gap-2">
-                      <Sheet>
-                        <SheetTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => {
-                              setReviewingSubmission(
-                                submission
-                              )
-                              setReviewNotes(
-                                submission.reviewNotes ||
-                                  ""
-                              )
-                            }}
-                          >
-                            <Eye className="h-4 w-4" />
-                          </Button>
-                        </SheetTrigger>
-                        <SheetContent>
-                          <SheetHeader>
-                            <SheetTitle>
-                              Review Submission
-                            </SheetTitle>
-                            <SheetDescription>
-                              Review the submission details
-                              and provide feedback
-                            </SheetDescription>
-                          </SheetHeader>
-                          {reviewingSubmission && (
-                            <div className="space-y-6 mt-6">
-                              <div>
-                                <Label className="text-sm font-medium">
-                                  User Address
-                                </Label>
-                                <p className="font-mono text-sm mt-1">
-                                  {
-                                    reviewingSubmission.userAddress
-                                  }
-                                </p>
-                              </div>
-                              <div>
-                                <Label className="text-sm font-medium">
-                                  Quest
-                                </Label>
-                                <p className="text-sm mt-1">
-                                  {
-                                    reviewingSubmission.questTitle
-                                  }
-                                </p>
-                              </div>
-                              <div>
-                                <Label className="text-sm font-medium">
-                                  XP Reward
-                                </Label>
-                                <p className="text-sm mt-1">
-                                  {
-                                    reviewingSubmission.xpReward
-                                  }{" "}
-                                  XP
-                                </p>
-                              </div>
-                              <div>
-                                <Label className="text-sm font-medium">
-                                  Review Notes
-                                </Label>
-                                <Textarea
-                                  value={reviewNotes}
-                                  onChange={(e) =>
-                                    setReviewNotes(
-                                      e.target.value
-                                    )
-                                  }
-                                  placeholder="Enter review notes..."
-                                  className="w-full"
-                                />
-                              </div>
-                              <div className="flex justify-end space-x-2">
-                                <Button
-                                  variant="outline"
-                                  onClick={() =>
-                                    setReviewingSubmission(
-                                      null
-                                    )
-                                  }
-                                >
-                                  Cancel
-                                </Button>
-                                <Button
-                                  onClick={() =>
-                                    handleReview(
-                                      reviewingSubmission,
-                                      "approved"
-                                    )
-                                  }
-                                >
-                                  <Check className="h-4 w-4" />{" "}
-                                  Approve
-                                </Button>
-                                <Button
-                                  variant="destructive"
-                                  onClick={() =>
-                                    handleReview(
-                                      reviewingSubmission,
-                                      "rejected"
-                                    )
-                                  }
-                                >
-                                  <X className="h-4 w-4" /> Reject
-                                </Button>
-                              </div>
-                            </div>
-                          )}
-                        </SheetContent>
-                      </Sheet>
+                  </TableHead>
+                  <TableHead className="w-48">User</TableHead>
+                  <TableHead className="w-64">Quest</TableHead>
+                  <TableHead className="w-32">Category</TableHead>
+                  <TableHead className="w-32">Submitted</TableHead>
+                  <TableHead className="w-40">Proof</TableHead>
+                  <TableHead className="w-24">XP</TableHead>
+                  <TableHead className="w-24">Status</TableHead>
+                  <TableHead className="w-32 text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+            <TableBody>
+              {filteredSubmissions.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={8} className="text-center py-8">
+                    <div className="flex flex-col items-center space-y-2">
+                      <AlertTriangle className="h-8 w-8 text-muted-foreground" />
+                      <p className="text-muted-foreground">No submissions found</p>
                     </div>
                   </TableCell>
                 </TableRow>
-              ))}
+              ) : (
+                filteredSubmissions.map((submission) => (
+                  <TableRow key={submission.id}>
+                    <TableCell>
+                      <Checkbox
+                        checked={selectedSubmissions.includes(submission.id)}
+                        onCheckedChange={(checked) =>
+                          handleSelectSubmission(submission.id, checked as boolean)
+                        }
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex items-center space-x-2">
+                        <Avatar className="h-8 w-8">
+                          <AvatarFallback>
+                            {submission.user_address.slice(0, 2).toUpperCase()}
+                          </AvatarFallback>
+                        </Avatar>
+                        <div>
+                          <p className="font-mono text-sm font-medium">
+                            {submission.user_address.slice(0, 8)}...{submission.user_address.slice(-6)}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            {submission.user_address}
+                          </p>
+                        </div>
+                      </div>
+                    </TableCell>
+                    <TableCell className="max-w-xs">
+                      <div>
+                        <p className="font-medium truncate">{submission.quest.title}</p>
+                        <p className="text-xs text-muted-foreground truncate">
+                          {submission.quest.description}
+                        </p>
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="outline" className="text-xs">
+                        {submission.quest.category?.name || 'Unknown'}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-sm">
+                      <div className="flex items-center space-x-1">
+                        <Calendar className="h-3 w-3 text-muted-foreground" />
+                        <span>{formatDate(submission.submitted_at)}</span>
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <Badge variant="outline" className="text-xs">
+                          {getProofTypeIcon(submission.proof_url)}
+                        </Badge>
+                        {submission.proof_data && (
+                          <Badge variant="secondary" className="text-xs">
+                            {(() => {
+                              const imageUrls: string[] = []
+                              const findImageUrls = (obj: any): void => {
+                                if (typeof obj === 'string') {
+                                  if (obj.match(/\.(jpg|jpeg|png|gif|webp|svg)$/i) || obj.startsWith('data:image/')) {
+                                    imageUrls.push(obj)
+                                  }
+                                } else if (typeof obj === 'object' && obj !== null) {
+                                  Object.values(obj).forEach(findImageUrls)
+                                }
+                              }
+                              findImageUrls(submission.proof_data)
+                              return imageUrls.length > 0 ? 'Images' : 'Data'
+                            })()}
+                          </Badge>
+                        )}
+                        <Dialog>
+                          <DialogTrigger asChild>
+                            <Button variant="ghost" size="sm">
+                              <Eye className="h-3 w-3" />
+                            </Button>
+                          </DialogTrigger>
+                          <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
+                            <DialogHeader>
+                              <DialogTitle>Proof Details</DialogTitle>
+                              <DialogDescription>
+                                Review the submission proof and associated data
+                              </DialogDescription>
+                            </DialogHeader>
+                            <div className="space-y-6">
+                              <div>
+                                <Label className="text-sm font-medium">Proof URL</Label>
+                                <div className="flex items-center space-x-2 mt-1">
+                                  <Input value={submission.proof_url} readOnly />
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    asChild
+                                  >
+                                    <a
+                                      href={submission.proof_url}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                    >
+                                      <ExternalLink className="h-3 w-3" />
+                                    </a>
+                                  </Button>
+                                </div>
+                              </div>
+                              
+                              {submission.proof_data && renderProofData(submission.proof_data)}
+                              
+                              <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                  <Label className="text-sm font-medium">Submission ID</Label>
+                                  <p className="text-sm mt-1 font-mono">{submission.id}</p>
+                                </div>
+                                <div>
+                                  <Label className="text-sm font-medium">Quest ID</Label>
+                                  <p className="text-sm mt-1 font-mono">{submission.quest_id}</p>
+                                </div>
+                                <div>
+                                  <Label className="text-sm font-medium">Submitted At</Label>
+                                  <p className="text-sm mt-1">{formatDate(submission.submitted_at)}</p>
+                                </div>
+                                <div>
+                                  <Label className="text-sm font-medium">Status</Label>
+                                  <Badge variant={getStatusColor(submission.status)} className="mt-1">
+                                    {submission.status}
+                                  </Badge>
+                                </div>
+                              </div>
+                            </div>
+                          </DialogContent>
+                        </Dialog>
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex items-center space-x-1">
+                        <Award className="h-3 w-3 text-yellow-500" />
+                        <span className="font-mono text-sm">
+                          {submission.quest.xp_reward} XP
+                        </span>
+                        {submission.quest.multiplier > 1 && (
+                          <Badge variant="secondary" className="text-xs">
+                            x{submission.quest.multiplier}
+                          </Badge>
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <Badge
+                        variant={getStatusColor(submission.status)}
+                        className="capitalize flex items-center space-x-1"
+                      >
+                        {getStatusIcon(submission.status)}
+                        <span>{submission.status}</span>
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex items-center justify-end gap-2">
+                        {submission.status === 'pending' && canReviewSubmission(submission) && (
+                          <>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleReview(submission, "approved")}
+                              disabled={isReviewing}
+                              className="text-green-600 hover:text-green-700 hover:bg-green-50"
+                            >
+                              <Check className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleReview(submission, "rejected")}
+                              disabled={isReviewing}
+                              className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                            >
+                              <X className="h-4 w-4" />
+                            </Button>
+                          </>
+                        )}
+                        <Sheet>
+                          <SheetTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                setReviewingSubmission(submission)
+                                setReviewNotes(submission.review_notes || "")
+                              }}
+                            >
+                              <Eye className="h-4 w-4" />
+                            </Button>
+                          </SheetTrigger>
+                          <SheetContent className="w-[400px] sm:w-[540px]">
+                            <SheetHeader>
+                              <SheetTitle>Review Submission</SheetTitle>
+                              <SheetDescription>
+                                Review the submission details and provide feedback
+                              </SheetDescription>
+                            </SheetHeader>
+                            {reviewingSubmission && (
+                              <div className="space-y-6 mt-6">
+                                <div className="grid grid-cols-2 gap-4">
+                                  <div>
+                                    <Label className="text-sm font-medium">User Address</Label>
+                                    <p className="font-mono text-sm mt-1 break-all">
+                                      {reviewingSubmission.user_address}
+                                    </p>
+                                  </div>
+                                  <div>
+                                    <Label className="text-sm font-medium">Quest</Label>
+                                    <p className="text-sm mt-1 font-medium">
+                                      {reviewingSubmission.quest.title}
+                                    </p>
+                                  </div>
+                                </div>
+                                
+                                <div className="grid grid-cols-2 gap-4">
+                                  <div>
+                                    <Label className="text-sm font-medium">Category</Label>
+                                    <p className="text-sm mt-1">
+                                      {reviewingSubmission.quest.category?.name || 'Unknown'}
+                                    </p>
+                                  </div>
+                                  <div>
+                                    <Label className="text-sm font-medium">XP Reward</Label>
+                                    <p className="text-sm mt-1 font-medium">
+                                      {reviewingSubmission.quest.xp_reward} XP
+                                      {reviewingSubmission.quest.multiplier > 1 && (
+                                        <span className="text-muted-foreground ml-1">
+                                          (x{reviewingSubmission.quest.multiplier})
+                                        </span>
+                                      )}
+                                    </p>
+                                  </div>
+                                </div>
+
+                                <div>
+                                  <Label className="text-sm font-medium">Quest Description</Label>
+                                  <p className="text-sm mt-1 text-muted-foreground">
+                                    {reviewingSubmission.quest.description}
+                                  </p>
+                                </div>
+
+                                <div>
+                                  <Label className="text-sm font-medium">Proof URL</Label>
+                                  <div className="flex items-center space-x-2 mt-1">
+                                    <Input value={reviewingSubmission.proof_url} readOnly />
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      asChild
+                                    >
+                                      <a
+                                        href={reviewingSubmission.proof_url}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                      >
+                                        <ExternalLink className="h-3 w-3" />
+                                      </a>
+                                    </Button>
+                                  </div>
+                                </div>
+
+                                {reviewingSubmission.proof_data && renderProofData(reviewingSubmission.proof_data)}
+
+                                <div>
+                                  <Label className="text-sm font-medium">Review Notes</Label>
+                                  <Textarea
+                                    value={reviewNotes}
+                                    onChange={(e) => setReviewNotes(e.target.value)}
+                                    placeholder="Enter review notes..."
+                                    className="w-full mt-1"
+                                    rows={3}
+                                  />
+                                </div>
+
+                                {reviewingSubmission.status !== 'pending' && (
+                                  <div className="p-3 bg-muted rounded-lg">
+                                    <div className="flex items-center space-x-2 mb-2">
+                                      <User className="h-4 w-4" />
+                                      <span className="text-sm font-medium">Reviewed by</span>
+                                    </div>
+                                    <p className="text-sm text-muted-foreground">
+                                      {reviewingSubmission.reviewed_by || 'Unknown'}
+                                    </p>
+                                    {reviewingSubmission.reviewed_at && (
+                                      <p className="text-xs text-muted-foreground mt-1">
+                                        {formatDate(reviewingSubmission.reviewed_at)}
+                                      </p>
+                                    )}
+                                  </div>
+                                )}
+
+                                {reviewingSubmission.status === 'pending' && canReviewSubmission(reviewingSubmission) && (
+                                  <div className="flex justify-end space-x-2">
+                                    <Button
+                                      variant="outline"
+                                      onClick={() => setReviewingSubmission(null)}
+                                    >
+                                      Cancel
+                                    </Button>
+                                    <Button
+                                      onClick={() => handleReview(reviewingSubmission, "approved")}
+                                      disabled={isReviewing}
+                                      className="bg-green-600 hover:bg-green-700"
+                                    >
+                                      <Check className="h-4 w-4 mr-2" />
+                                      Approve
+                                    </Button>
+                                    <Button
+                                      variant="destructive"
+                                      onClick={() => handleReview(reviewingSubmission, "rejected")}
+                                      disabled={isReviewing}
+                                    >
+                                      <X className="h-4 w-4 mr-2" />
+                                      Reject
+                                    </Button>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </SheetContent>
+                        </Sheet>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))
+              )}
             </TableBody>
           </Table>
+          </div>
         </CardContent>
       </Card>
     </div>
