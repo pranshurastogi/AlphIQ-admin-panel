@@ -242,7 +242,30 @@ export default function SubmissionsPage() {
         return
       }
 
-      const { error } = await supabase
+      // Get current submission status to handle XP changes
+      const currentStatus = submission.status
+      const xpReward = submission.quest.xp_reward * submission.quest.multiplier
+
+      // Handle XP changes based on status transition
+      let xpChange = 0
+      let xpHistoryReason = ""
+
+      if (currentStatus === 'pending' && status === 'approved') {
+        // New approval - add XP
+        xpChange = xpReward
+        xpHistoryReason = `Quest approved: ${submission.quest.title}`
+      } else if (currentStatus === 'approved' && status === 'rejected') {
+        // Change from approved to rejected - remove XP
+        xpChange = -xpReward
+        xpHistoryReason = `Quest rejected: ${submission.quest.title}`
+      } else if (currentStatus === 'rejected' && status === 'approved') {
+        // Change from rejected to approved - add XP
+        xpChange = xpReward
+        xpHistoryReason = `Quest approved: ${submission.quest.title}`
+      }
+
+      // 1. Update submission status
+      const { error: submissionError } = await supabase
         .from('admin_quest_submissions')
         .update({
           status,
@@ -252,8 +275,51 @@ export default function SubmissionsPage() {
         })
         .eq('id', submission.id)
 
-      if (error) {
-        throw error
+      if (submissionError) {
+        throw submissionError
+      }
+
+      // 2. Handle XP changes if needed
+      if (xpChange !== 0) {
+        // Add XP history record
+        const { error: historyError } = await supabase
+          .from('admin_user_xp_history')
+          .insert({
+            user_address: submission.user_address,
+            change: xpChange,
+            reason: xpHistoryReason,
+            submission_id: submission.id,
+          })
+
+        if (historyError) {
+          throw historyError
+        }
+
+        // Get current user XP and update it
+        const { data: userData, error: userError } = await supabase
+          .from('users')
+          .select('admin_total_xp')
+          .eq('address', submission.user_address)
+          .single()
+
+        if (userError) {
+          throw userError
+        }
+
+        const currentXP = userData?.admin_total_xp || 0
+        const newXP = currentXP + xpChange
+
+        const { error: updateError } = await supabase
+          .from('users')
+          .update({
+            admin_total_xp: newXP,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('address', submission.user_address)
+
+        if (updateError) {
+          throw updateError
+                }
       }
 
       // Update local state
@@ -272,9 +338,16 @@ export default function SubmissionsPage() {
       setReviewingSubmission(null)
       setReviewNotes("")
       
+      // Show appropriate message
+      const xpMessage = xpChange > 0 
+        ? ` and awarded ${xpChange} XP` 
+        : xpChange < 0 
+        ? ` and removed ${Math.abs(xpChange)} XP`
+        : ''
+      
       toast({
         title: `Submission ${status}`,
-        description: `${submission.quest.title} submission has been ${status}.`,
+        description: `${submission.quest.title} submission has been ${status}${xpMessage}.`,
       })
 
       // Refresh stats
@@ -283,7 +356,7 @@ export default function SubmissionsPage() {
       console.error('Error reviewing submission:', error)
       toast({
         title: "Error",
-        description: "Failed to update submission",
+        description: "Failed to update submission and XP",
         variant: "destructive",
       })
     } finally {
@@ -311,18 +384,84 @@ export default function SubmissionsPage() {
         return
       }
 
-      const { error } = await supabase
-        .from('admin_quest_submissions')
-        .update({
-          status: action === "approve" ? "approved" : "rejected",
-          reviewed_by: profile.id,
-          reviewed_at: new Date().toISOString(),
-        })
-        .in('id', selectedSubmissions)
-        .eq('status', 'pending')
+      // Process each submission individually to handle XP properly
+      let processedCount = 0
+      let totalXPAwarded = 0
 
-      if (error) {
-        throw error
+      for (const submissionId of selectedSubmissions) {
+        const submission = submissions.find(s => s.id === submissionId && s.status === 'pending')
+        if (!submission) continue
+
+        const xpReward = submission.quest.xp_reward * submission.quest.multiplier
+        const xpChange = action === "approve" ? xpReward : 0
+        const xpHistoryReason = action === "approve" 
+          ? `Quest approved: ${submission.quest.title}`
+          : `Quest rejected: ${submission.quest.title}`
+
+        // Update submission status
+        const { error: submissionError } = await supabase
+          .from('admin_quest_submissions')
+          .update({
+            status: action === "approve" ? "approved" : "rejected",
+            reviewed_by: profile.id,
+            reviewed_at: new Date().toISOString(),
+          })
+          .eq('id', submissionId)
+
+        if (submissionError) {
+          console.error(`Error updating submission ${submissionId}:`, submissionError)
+          continue
+        }
+
+        // Handle XP for approved submissions
+        if (action === "approve" && xpChange > 0) {
+          // Add XP history record
+          const { error: historyError } = await supabase
+            .from('admin_user_xp_history')
+            .insert({
+              user_address: submission.user_address,
+              change: xpChange,
+              reason: xpHistoryReason,
+              submission_id: submissionId,
+            })
+
+          if (historyError) {
+            console.error(`Error adding XP history for submission ${submissionId}:`, historyError)
+            continue
+          }
+
+          // Get current user XP and update it
+          const { data: userData, error: userError } = await supabase
+            .from('users')
+            .select('admin_total_xp')
+            .eq('address', submission.user_address)
+            .single()
+
+          if (userError) {
+            console.error(`Error getting user XP for submission ${submissionId}:`, userError)
+            continue
+          }
+
+          const currentXP = userData?.admin_total_xp || 0
+          const newXP = currentXP + xpChange
+
+          const { error: updateError } = await supabase
+            .from('users')
+            .update({
+              admin_total_xp: newXP,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('address', submission.user_address)
+
+          if (updateError) {
+            console.error(`Error updating user XP for submission ${submissionId}:`, updateError)
+            continue
+          }
+
+          totalXPAwarded += xpChange
+        }
+
+        processedCount++
       }
 
       // Update local state
@@ -339,9 +478,14 @@ export default function SubmissionsPage() {
 
       setSelectedSubmissions([])
       
+      // Show appropriate message
+      const xpMessage = action === "approve" && totalXPAwarded > 0 
+        ? ` and awarded ${totalXPAwarded} XP total`
+        : ''
+      
       toast({
         title: `Batch ${action}`,
-        description: `${selectedSubmissions.length} submissions have been ${action}d.`,
+        description: `${processedCount} submissions have been ${action}d${xpMessage}.`,
       })
 
       // Refresh stats
@@ -350,7 +494,7 @@ export default function SubmissionsPage() {
       console.error('Error batch updating submissions:', error)
       toast({
         title: "Error",
-        description: "Failed to update submissions",
+        description: "Failed to update submissions and XP",
         variant: "destructive",
       })
     } finally {
