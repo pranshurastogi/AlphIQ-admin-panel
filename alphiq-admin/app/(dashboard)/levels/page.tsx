@@ -186,14 +186,14 @@ export default function LevelsPage() {
           <Dialog
             open={mode!==null}
             onOpenChange={o => {
-              console.log('[Dialog] onOpenChange', o, 'mode:', mode)
+              // console.log('[Dialog] onOpenChange', o, 'mode:', mode)
               if (!o) setMode(null)
             }}
           >
             <Button
               variant="default"
               onClick={() => {
-                console.log('[Create] Clicked')
+                // console.log('[Create] Clicked')
                 setMode('create')
                 setForm(emptyForm)
               }}
@@ -318,7 +318,7 @@ export default function LevelsPage() {
                         <Button
                           variant="ghost" size="sm"
                           onClick={() => {
-                            console.log('[Edit] Clicked', l)
+                            // console.log('[Edit] Clicked', l)
                             setMode('edit')
                             setForm(l)
                           }}

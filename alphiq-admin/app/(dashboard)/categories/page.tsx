@@ -134,7 +134,7 @@ export default function CategoriesPage() {
       return
     }
     setIsSubmitting(true)
-    console.log('[Categories] create', formData)
+    // console.log('[Categories] create', formData)
     try {
       const { error: insErr } = await supabase
         .from('admin_quest_categories')
@@ -165,7 +165,7 @@ export default function CategoriesPage() {
       return
     }
     setIsSubmitting(true)
-    console.log('[Categories] update', editing.id, formData)
+    // console.log('[Categories] update', editing.id, formData)
     try {
       const { error: updErr } = await supabase
         .from('admin_quest_categories')
@@ -205,7 +205,7 @@ export default function CategoriesPage() {
     }
     if (!confirm(`Really delete "${cat.name}"?`)) return
 
-    console.log('[Categories] delete', cat.id)
+    // console.log('[Categories] delete', cat.id)
     try {
       const { error: delErr } = await supabase
         .from('admin_quest_categories')

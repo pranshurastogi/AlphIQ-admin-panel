@@ -174,14 +174,17 @@ export default function SubmissionsPage() {
         return
       }
 
-      setSubmissions(submissions || [])
+      // Filter out submissions with null quest objects (orphaned submissions)
+      const validSubmissions = (submissions || []).filter(s => s.quest)
+
+      setSubmissions(validSubmissions)
       
       // Calculate stats
       const stats = {
-        total: submissions?.length || 0,
-        pending: submissions?.filter((s: Submission) => s.status === 'pending').length || 0,
-        approved: submissions?.filter((s: Submission) => s.status === 'approved').length || 0,
-        rejected: submissions?.filter((s: Submission) => s.status === 'rejected').length || 0,
+        total: validSubmissions.length,
+        pending: validSubmissions.filter((s: Submission) => s.status === 'pending').length,
+        approved: validSubmissions.filter((s: Submission) => s.status === 'approved').length,
+        rejected: validSubmissions.filter((s: Submission) => s.status === 'rejected').length,
       }
       setStats(stats)
     } catch (error) {

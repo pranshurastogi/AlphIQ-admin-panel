@@ -44,13 +44,17 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
   const [profile, setProfile] = useState<AdminProfile|null>(null)
   const [session, setSession] = useState<Session|null>(null)
   const [loading, setLoading] = useState(true)
+  const [profileCache, setProfileCache] = useState<Record<string, AdminProfile>>({})
 
   // On mount: check existing session
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session)
       setUser(session?.user ?? null)
-      setLoading(false)
+      // Only set loading to false if we don't have a user (no profile to fetch)
+      if (!session?.user) {
+        setLoading(false)
+      }
     })
 
     // Subscribe to auth changes
@@ -58,6 +62,10 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
       (_event, newSession) => {
         setSession(newSession)
         setUser(newSession?.user ?? null)
+        // Set loading to false when user logs out
+        if (!newSession?.user) {
+          setLoading(false)
+        }
       }
     )
     return () => subscription.unsubscribe()
@@ -69,7 +77,19 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
       setProfile(null)
       return
     }
-    setLoading(true)
+    
+    // Check if we have a cached profile for this user
+    if (profileCache[user.id]) {
+      setProfile(profileCache[user.id])
+      setLoading(false)
+      return
+    }
+    
+    // Only set loading to true if we don't have a profile yet
+    if (!profile) {
+      setLoading(true)
+    }
+    
     supabase
       .from('admin_user_profiles')
       .select('*')
@@ -81,10 +101,12 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
           setProfile(null)
         } else {
           setProfile(data)
+          // Cache the profile
+          setProfileCache(prev => ({ ...prev, [user.id]: data }))
         }
         setLoading(false)
       })
-  }, [user])
+  }, [user, profileCache])
 
   // ------ Actions ------
 
@@ -131,6 +153,7 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
     await supabase.auth.signOut()
     setUser(null)
     setProfile(null)
+    setProfileCache({}) // Clear cache on logout
   }
 
   const resetPassword = async (email: string) => {
@@ -141,7 +164,7 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
   // Permission logic
   const rolePermissions: Record<string, string[]> = {
     super_admin: ['*'],
-    sub_admin: ['dashboard.view', 'quests.manage', 'users.view'],
+    sub_admin: ['dashboard.view', 'quests.manage', 'users.view', 'submissions.review'],
     moderator: ['dashboard.view', 'submissions.review'],
     viewer: ['dashboard.view'],
   }
