@@ -21,8 +21,10 @@ import {
 } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
-import { Search, Plus, Edit, Trash2, Info } from 'lucide-react'
+import { Search, Plus, Edit, Trash2, Info, X, Settings, Image, Link as LinkIcon, Tag, FileText } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Separator } from '@/components/ui/separator'
 import useSWR from 'swr'
 
 interface Quest {
@@ -50,6 +52,14 @@ interface Quest {
 interface Category {
   id: number
   name: string
+}
+
+interface MetaSection {
+  id: string
+  name: string
+  type: 'text' | 'url' | 'image' | 'tags' | 'number' | 'boolean'
+  value: any
+  required?: boolean
 }
 
 export default function QuestsPage() {
@@ -82,6 +92,8 @@ export default function QuestsPage() {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState<Quest|null>(null)
   const [viewing, setViewing] = useState<Quest|null>(null)
+  const [metaSections, setMetaSections] = useState<MetaSection[]>([])
+  const [showMetaBuilder, setShowMetaBuilder] = useState(false)
 
   const blank = {
     title: '',
@@ -119,14 +131,35 @@ export default function QuestsPage() {
       })
   }, [user])
 
-  // Remove fetchAll and useSWR handles fetching
+  // Initialize default meta sections
+  useEffect(() => {
+    if (!metaSections.length) {
+      setMetaSections([
+        { id: 'icon', name: 'Icon URL', type: 'image', value: '' },
+        { id: 'tags', name: 'Tags', type: 'tags', value: [] },
+        { id: 'external_link', name: 'External Link', type: 'url', value: '' },
+        { id: 'difficulty', name: 'Difficulty', type: 'text', value: '' },
+        { id: 'time_estimate', name: 'Time Estimate (minutes)', type: 'number', value: 0 },
+        { id: 'featured', name: 'Featured Quest', type: 'boolean', value: false }
+      ])
+    }
+  }, [])
 
   // 3) Open dialog
   const openNew = () => {
     setEditing(null)
     setForm(blank)
+    setMetaSections([
+      { id: 'icon', name: 'Icon URL', type: 'image', value: '' },
+      { id: 'tags', name: 'Tags', type: 'tags', value: [] },
+      { id: 'external_link', name: 'External Link', type: 'url', value: '' },
+      { id: 'difficulty', name: 'Difficulty', type: 'text', value: '' },
+      { id: 'time_estimate', name: 'Time Estimate (minutes)', type: 'number', value: 0 },
+      { id: 'featured', name: 'Featured Quest', type: 'boolean', value: false }
+    ])
     setDialogOpen(true)
   }
+  
   const openEdit = (q:Quest) => {
     setEditing(q)
     setForm({
@@ -135,7 +168,88 @@ export default function QuestsPage() {
       multiplier_start: q.multiplier_start?.slice(0,19).replace('T',' '),
       multiplier_end:   q.multiplier_end?.slice(0,19).replace('T',' ')
     })
+    
+    // Convert meta to sections
+    const sections: MetaSection[] = [
+      { id: 'icon', name: 'Icon URL', type: 'image', value: q.meta?.icon || '' },
+      { id: 'tags', name: 'Tags', type: 'tags', value: q.meta?.tags || [] },
+      { id: 'external_link', name: 'External Link', type: 'url', value: q.meta?.external_link || '' },
+      { id: 'difficulty', name: 'Difficulty', type: 'text', value: q.meta?.difficulty || '' },
+      { id: 'time_estimate', name: 'Time Estimate (minutes)', type: 'number', value: q.meta?.time_estimate || 0 },
+      { id: 'featured', name: 'Featured Quest', type: 'boolean', value: q.meta?.featured || false }
+    ]
+    
+    // Add any custom meta fields
+    if (q.meta) {
+      Object.keys(q.meta).forEach(key => {
+        if (!sections.find(s => s.id === key)) {
+          sections.push({
+            id: key,
+            name: key.charAt(0).toUpperCase() + key.slice(1).replace(/_/g, ' '),
+            type: 'text',
+            value: q.meta[key]
+          })
+        }
+      })
+    }
+    
+    setMetaSections(sections)
     setDialogOpen(true)
+  }
+
+  // Update meta when sections change
+  const updateMetaFromSections = (sections: MetaSection[]) => {
+    const meta: any = {}
+    sections.forEach(section => {
+      if (section.value !== '' && section.value !== null && section.value !== undefined) {
+        meta[section.id] = section.value
+      }
+    })
+    setForm(f => ({ ...f, meta }))
+  }
+
+  // Handle meta section changes
+  const updateMetaSection = (id: string, value: any) => {
+    const updatedSections = metaSections.map(section => 
+      section.id === id ? { ...section, value } : section
+    )
+    setMetaSections(updatedSections)
+    updateMetaFromSections(updatedSections)
+  }
+
+  // Add new meta section
+  const addMetaSection = () => {
+    const newSection: MetaSection = {
+      id: `custom_${Date.now()}`,
+      name: '',
+      type: 'text',
+      value: ''
+    }
+    setMetaSections([...metaSections, newSection])
+  }
+
+  // Remove meta section
+  const removeMetaSection = (id: string) => {
+    const updatedSections = metaSections.filter(section => section.id !== id)
+    setMetaSections(updatedSections)
+    updateMetaFromSections(updatedSections)
+  }
+
+  // Update meta section name
+  const updateMetaSectionName = (id: string, name: string) => {
+    const updatedSections = metaSections.map(section => 
+      section.id === id ? { ...section, name } : section
+    )
+    setMetaSections(updatedSections)
+  }
+
+  // Update meta section type
+  const updateMetaSectionType = (id: string, type: MetaSection['type']) => {
+    const updatedSections = metaSections.map(section => 
+      section.id === id ? { ...section, type, value: type === 'boolean' ? false : type === 'number' ? 0 : type === 'tags' ? [] : '' } : section
+    )
+    setMetaSections(updatedSections)
+    updateMetaFromSections(updatedSections)
   }
 
   // 4) Submit (create/update)
@@ -148,6 +262,15 @@ export default function QuestsPage() {
         variant:'destructive'
       })
     }
+    
+    // Build meta from sections
+    const meta: any = {}
+    metaSections.forEach(section => {
+      if (section.value !== '' && section.value !== null && section.value !== undefined) {
+        meta[section.id] = section.value
+      }
+    })
+    
     const payload = {
       title:        form.title,
       description:  form.description,
@@ -162,7 +285,7 @@ export default function QuestsPage() {
       end_at:       form.end_at || null,
       is_active:    form.is_active,
       prerequisites: Array.isArray(form.prerequisites) ? form.prerequisites : [],
-      meta:         form.meta,
+      meta:         meta,
       comments:     form.comments
     }
     try {
@@ -211,6 +334,87 @@ export default function QuestsPage() {
   const list = quests.filter(q=>
     q.title.toLowerCase().includes(search.toLowerCase())
   )
+
+  // Render meta section input based on type
+  const renderMetaInput = (section: MetaSection) => {
+    switch (section.type) {
+      case 'text':
+        return (
+          <Input
+            value={section.value || ''}
+            onChange={(e) => updateMetaSection(section.id, e.target.value)}
+            placeholder={`Enter ${section.name.toLowerCase()}`}
+          />
+        )
+      case 'url':
+        return (
+          <Input
+            type="url"
+            value={section.value || ''}
+            onChange={(e) => updateMetaSection(section.id, e.target.value)}
+            placeholder="https://example.com"
+          />
+        )
+      case 'image':
+        return (
+          <Input
+            type="url"
+            value={section.value || ''}
+            onChange={(e) => updateMetaSection(section.id, e.target.value)}
+            placeholder="https://example.com/image.png"
+          />
+        )
+      case 'number':
+        return (
+          <Input
+            type="number"
+            value={section.value || 0}
+            onChange={(e) => updateMetaSection(section.id, parseInt(e.target.value) || 0)}
+          />
+        )
+      case 'boolean':
+        return (
+          <Switch
+            checked={!!section.value}
+            onChange={(val) => updateMetaSection(section.id, val)}
+            className={`${
+              section.value ? 'bg-green-500' : 'bg-gray-400'
+            } relative inline-flex h-6 w-11 items-center rounded-full transition-colors`}
+          >
+            <span className="sr-only">{section.name}</span>
+            <span
+              className={`${
+                section.value ? 'translate-x-6' : 'translate-x-1'
+              } inline-block h-4 w-4 transform rounded-full bg-white transition-transform`}
+            />
+          </Switch>
+        )
+      case 'tags':
+        return (
+          <div className="space-y-2">
+            <Input
+              placeholder="Enter tags separated by commas"
+              value={Array.isArray(section.value) ? section.value.join(', ') : ''}
+              onChange={(e) => {
+                const tags = e.target.value.split(',').map(tag => tag.trim()).filter(tag => tag)
+                updateMetaSection(section.id, tags)
+              }}
+            />
+            {Array.isArray(section.value) && section.value.length > 0 && (
+              <div className="flex flex-wrap gap-1">
+                {section.value.map((tag, index) => (
+                  <Badge key={index} variant="secondary" className="text-xs">
+                    {tag}
+                  </Badge>
+                ))}
+              </div>
+            )}
+          </div>
+        )
+      default:
+        return <Input value={section.value || ''} onChange={(e) => updateMetaSection(section.id, e.target.value)} />
+    }
+  }
 
   return (
     <TooltipProvider>
@@ -302,7 +506,7 @@ export default function QuestsPage() {
       </Card>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{editing?'Edit Quest':'New Quest'}</DialogTitle>
             <DialogDescription>
@@ -310,225 +514,271 @@ export default function QuestsPage() {
             </DialogDescription>
           </DialogHeader>
 
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label htmlFor="title">Title*</Label>
-                <Input
-                  id="title"
-                  value={form.title||''}
-                  onChange={e=>setForm(f=>({...f,title:e.target.value}))}
-                  required
-                />
-              </div>
-              <div>
-                <Label htmlFor="category">Category*</Label>
-                <Select
-                  value={String(form.category_id||'')}
-                  onValueChange={v=>setForm(f=>({...f,category_id: +v}))}
-                >
-                  <SelectTrigger id="category">
-                    <SelectValue placeholder="Pick…"/>
-                  </SelectTrigger>
-                  <SelectContent>
-                    {categories.map(c=>(
-                      <SelectItem key={c.id} value={String(c.id)}>
-                        {c.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
+          <form onSubmit={handleSubmit} className="space-y-6">
+            <Tabs defaultValue="basic" className="w-full">
+              <TabsList className="grid w-full grid-cols-3">
+                <TabsTrigger value="basic">Basic Info</TabsTrigger>
+                <TabsTrigger value="meta">Meta Data</TabsTrigger>
+                <TabsTrigger value="advanced">Advanced</TabsTrigger>
+              </TabsList>
+              
+              <TabsContent value="basic" className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label htmlFor="title">Title*</Label>
+                    <Input
+                      id="title"
+                      value={form.title||''}
+                      onChange={e=>setForm(f=>({...f,title:e.target.value}))}
+                      required
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="category">Category*</Label>
+                    <Select
+                      value={String(form.category_id||'')}
+                      onValueChange={v=>setForm(f=>({...f,category_id: +v}))}
+                    >
+                      <SelectTrigger id="category">
+                        <SelectValue placeholder="Pick…"/>
+                      </SelectTrigger>
+                      <SelectContent>
+                        {categories.map(c=>(
+                          <SelectItem key={c.id} value={String(c.id)}>
+                            {c.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
 
-            <div>
-              <Label htmlFor="desc">
-                Description
-              </Label>
-              <Textarea
-                id="desc"
-                rows={4}
-                value={form.description||''}
-                onChange={e=>setForm(f=>({...f,description:e.target.value}))}
-              />
-            </div>
-
-            <div className="grid grid-cols-3 gap-4">
-              <div>
-                <Label htmlFor="xp">XP Reward</Label>
-                <Input
-                  id="xp"
-                  type="number"
-                  step="1"
-                  value={form.xp_reward||0}
-                  onChange={e=>setForm(f=>({...f,xp_reward:+e.target.value}))}
-                />
-              </div>
-              <div>
-                <Label htmlFor="mult">Multiplier</Label>
-                <Input
-                  id="mult"
-                  type="number"
-                  step="0.1"
-                  value={form.multiplier||1}
-                  onChange={e=>setForm(f=>({...f,multiplier:+e.target.value}))}
-                />
-              </div>
-              <div className="flex items-center mt-5">
-                <Switch
-                  checked={!!form.is_active}
-                  onChange={val=>setForm(f=>({...f,is_active:val}))}
-                  className={`${
-                    form.is_active ? 'bg-green-500' : 'bg-gray-400'
-                  } relative inline-flex h-6 w-11 items-center rounded-full transition-colors`}
-                >
-                  <span className="sr-only">Active?</span>
-                  <span
-                    className={`${
-                      form.is_active ? 'translate-x-6' : 'translate-x-1'
-                    } inline-block h-4 w-4 transform rounded-full bg-white transition-transform`}
+                <div>
+                  <Label htmlFor="desc">Description</Label>
+                  <Textarea
+                    id="desc"
+                    rows={4}
+                    value={form.description||''}
+                    onChange={e=>setForm(f=>({...f,description:e.target.value}))}
+                    placeholder="Describe the quest and what users need to do..."
                   />
-                </Switch>
-                <span className="ml-2 text-sm">Active</span>
-              </div>
-            </div>
+                </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label>Multiplier Start
-                  <TooltipProvider>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <span className="ml-1 align-middle cursor-pointer"><Info size={14}/></span>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        <span>When the XP multiplier for this quest begins. Use to create time-limited bonus periods.</span>
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
-                </Label>
-                <Input
-                  type="date"
-                  value={form.multiplier_start ? form.multiplier_start.slice(0,10) : ''}
-                  onChange={e=>setForm(f=>({...f,multiplier_start:e.target.value}))}
-                />
-              </div>
-              <div>
-                <Label>Multiplier End
-                  <TooltipProvider>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <span className="ml-1 align-middle cursor-pointer"><Info size={14}/></span>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        <span>When the XP multiplier for this quest ends. Leave blank for no end.</span>
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
-                </Label>
-                <Input
-                  type="date"
-                  value={form.multiplier_end ? form.multiplier_end.slice(0,10) : ''}
-                  onChange={e=>setForm(f=>({...f,multiplier_end:e.target.value}))}
-                />
-              </div>
-            </div>
+                <div className="grid grid-cols-3 gap-4">
+                  <div>
+                    <Label htmlFor="xp">XP Reward</Label>
+                    <Input
+                      id="xp"
+                      type="number"
+                      step="1"
+                      value={form.xp_reward||0}
+                      onChange={e=>setForm(f=>({...f,xp_reward:+e.target.value}))}
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="mult">Multiplier</Label>
+                    <Input
+                      id="mult"
+                      type="number"
+                      step="0.1"
+                      value={form.multiplier||1}
+                      onChange={e=>setForm(f=>({...f,multiplier:+e.target.value}))}
+                    />
+                  </div>
+                  <div className="flex items-center mt-5">
+                    <Switch
+                      checked={!!form.is_active}
+                      onChange={val=>setForm(f=>({...f,is_active:val}))}
+                      className={`${
+                        form.is_active ? 'bg-green-500' : 'bg-gray-400'
+                      } relative inline-flex h-6 w-11 items-center rounded-full transition-colors`}
+                    >
+                      <span className="sr-only">Active?</span>
+                      <span
+                        className={`${
+                          form.is_active ? 'translate-x-6' : 'translate-x-1'
+                        } inline-block h-4 w-4 transform rounded-full bg-white transition-transform`}
+                      />
+                    </Switch>
+                    <span className="ml-2 text-sm">Active</span>
+                  </div>
+                </div>
+              </TabsContent>
 
-            <div className="grid grid-cols-3 gap-4">
-              <div>
-                <Label>Start At</Label>
-                <Input
-                  type="date"
-                  value={form.start_at||''}
-                  onChange={e=>setForm(f=>({...f,start_at:e.target.value}))}
-                  required
-                />
-              </div>
-              <div>
-                <Label>End At</Label>
-                <Input
-                  type="date"
-                  value={form.end_at||''}
-                  onChange={e=>setForm(f=>({...f,end_at:e.target.value}))}
-                />
-              </div>
-              <div>
-                <Label>Prereqs
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <button type="button" tabIndex={0} className="ml-1 align-middle cursor-pointer p-0 bg-transparent border-0">
-                        <Info size={14}/>
-                      </button>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <span>Quest IDs that must be completed before this quest is available. Enter one or more quest IDs, separated by commas. (A multi-select UI can be implemented if needed.)</span>
-                    </TooltipContent>
-                  </Tooltip>
-                </Label>
-                {/* TODO: Replace with a true multi-select if available in your UI library */}
-                <Input
-                  placeholder="1,2,5"
-                  value={(form.prerequisites||[]).join(',')}
-                  onChange={e=>{
-                    const arr = e.target.value
-                      .split(',')
-                      .map(x=>parseInt(x,10))
-                      .filter(n=>!isNaN(n))
-                    setForm(f=>({...f,prerequisites:arr}))
-                  }}
-                />
-              </div>
-            </div>
+              <TabsContent value="meta" className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-lg font-semibold">Quest Meta Data</h3>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={addMetaSection}
+                  >
+                    <Plus className="mr-2 h-4 w-4" />
+                    Add Custom Field
+                  </Button>
+                </div>
+                
+                <div className="space-y-4">
+                  {metaSections.map((section, index) => (
+                    <Card key={section.id} className="p-4">
+                      <div className="flex items-start justify-between mb-3">
+                        <div className="flex-1 grid grid-cols-3 gap-2">
+                          <div>
+                            <Label className="text-sm font-medium">Field Name</Label>
+                            <Input
+                              value={section.name}
+                              onChange={(e) => updateMetaSectionName(section.id, e.target.value)}
+                              placeholder="Field name"
+                              className="text-sm"
+                            />
+                          </div>
+                          <div>
+                            <Label className="text-sm font-medium">Type</Label>
+                            <Select
+                              value={section.type}
+                              onValueChange={(value: MetaSection['type']) => updateMetaSectionType(section.id, value)}
+                            >
+                              <SelectTrigger className="text-sm">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="text">Text</SelectItem>
+                                <SelectItem value="url">URL</SelectItem>
+                                <SelectItem value="image">Image URL</SelectItem>
+                                <SelectItem value="tags">Tags</SelectItem>
+                                <SelectItem value="number">Number</SelectItem>
+                                <SelectItem value="boolean">Boolean</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="flex items-end">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => removeMetaSection(section.id)}
+                              className="text-red-500 hover:text-red-700"
+                            >
+                              <X className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                      <div>
+                        <Label className="text-sm font-medium">Value</Label>
+                        {renderMetaInput(section)}
+                      </div>
+                    </Card>
+                  ))}
+                </div>
+              </TabsContent>
 
-            <div>
-              <Label>Meta (JSON)
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button type="button" tabIndex={0} className="ml-1 align-middle cursor-pointer p-0 bg-transparent border-0">
-                      <Info size={14}/>
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    <span>
-                      Stores any extra, free-form data you might want to attach to a quest:<br/>
-                      – Icons or image URLs<br/>
-                      – Tags or categories beyond the single category_id (e.g. ["defi","nft","twitter"])<br/>
-                      – Links to external docs or guides<br/>
-                      – Anything else that doesn’t merit its own strongly-typed column<br/>
-                      <br/>
-                      Because it’s JSONB, you can index particular keys or even add a GIN index over the whole JSON if you need to query on, say, meta-&gt;&gt;'tags'.
-                    </span>
-                  </TooltipContent>
-                </Tooltip>
-              </Label>
-              <Textarea
-                rows={3}
-                value={typeof form.meta === 'string' ? form.meta : JSON.stringify(form.meta,null,2)}
-                onChange={e=>{
-                  try {
-                    setForm(f=>({...f,meta:JSON.parse(e.target.value)}))
-                  } catch {
-                    setForm(f=>({...f,meta:e.target.value}))
-                  }
-                }}
-              />
-            </div>
+              <TabsContent value="advanced" className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label>Multiplier Start
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="ml-1 align-middle cursor-pointer"><Info size={14}/></span>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <span>When the XP multiplier for this quest begins. Use to create time-limited bonus periods.</span>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    </Label>
+                    <Input
+                      type="date"
+                      value={form.multiplier_start ? form.multiplier_start.slice(0,10) : ''}
+                      onChange={e=>setForm(f=>({...f,multiplier_start:e.target.value}))}
+                    />
+                  </div>
+                  <div>
+                    <Label>Multiplier End
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="ml-1 align-middle cursor-pointer"><Info size={14}/></span>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <span>When the XP multiplier for this quest ends. Leave blank for no end.</span>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    </Label>
+                    <Input
+                      type="date"
+                      value={form.multiplier_end ? form.multiplier_end.slice(0,10) : ''}
+                      onChange={e=>setForm(f=>({...f,multiplier_end:e.target.value}))}
+                    />
+                  </div>
+                </div>
 
-            <div>
-              <Label>Comments</Label>
-              <Textarea
-                rows={2}
-                value={form.comments||''}
-                onChange={e=>setForm(f=>({...f,comments:e.target.value}))}
-              />
-            </div>
+                <div className="grid grid-cols-3 gap-4">
+                  <div>
+                    <Label>Start At</Label>
+                    <Input
+                      type="date"
+                      value={form.start_at||''}
+                      onChange={e=>setForm(f=>({...f,start_at:e.target.value}))}
+                      required
+                    />
+                  </div>
+                  <div>
+                    <Label>End At</Label>
+                    <Input
+                      type="date"
+                      value={form.end_at||''}
+                      onChange={e=>setForm(f=>({...f,end_at:e.target.value}))}
+                    />
+                  </div>
+                  <div>
+                    <Label>Prereqs
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <button type="button" tabIndex={0} className="ml-1 align-middle cursor-pointer p-0 bg-transparent border-0">
+                            <Info size={14}/>
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <span>Quest IDs that must be completed before this quest is available. Enter one or more quest IDs, separated by commas.</span>
+                        </TooltipContent>
+                      </Tooltip>
+                    </Label>
+                    <Input
+                      placeholder="1,2,5"
+                      value={(form.prerequisites||[]).join(',')}
+                      onChange={e=>{
+                        const arr = e.target.value
+                          .split(',')
+                          .map(x=>parseInt(x,10))
+                          .filter(n=>!isNaN(n))
+                        setForm(f=>({...f,prerequisites:arr}))
+                      }}
+                    />
+                  </div>
+                </div>
 
-            {editing && (
-              <div className="text-sm text-neutral-500">
-                Created: {editing.created_at}<br/>
-                Updated: {editing.updated_at}
-              </div>
-            )}
+                <div>
+                  <Label>Comments</Label>
+                  <Textarea
+                    rows={3}
+                    value={form.comments||''}
+                    onChange={e=>setForm(f=>({...f,comments:e.target.value}))}
+                    placeholder="Internal notes about this quest..."
+                  />
+                </div>
+
+                {editing && (
+                  <div className="text-sm text-neutral-500">
+                    Created: {editing.created_at}<br/>
+                    Updated: {editing.updated_at}
+                  </div>
+                )}
+              </TabsContent>
+            </Tabs>
 
             <DialogFooter className="space-x-2">
               <Button variant="outline" onClick={()=>setDialogOpen(false)} type="button">
@@ -610,10 +860,33 @@ export default function QuestsPage() {
                     ))}</div>
                   : <span className="text-muted-foreground">None</span>}
               </div>
-              <div>
-                <div className="font-semibold mb-1">Meta</div>
-                <pre className="bg-muted rounded p-2 text-xs overflow-x-auto">{JSON.stringify(viewing.meta, null, 2)}</pre>
-              </div>
+              {viewing.meta && Object.keys(viewing.meta).length > 0 && (
+                <div>
+                  <div className="font-semibold mb-2">Meta Data</div>
+                  <div className="space-y-2">
+                    {Object.entries(viewing.meta).map(([key, value]) => (
+                      <div key={key} className="flex items-center gap-2">
+                        <span className="font-medium text-sm">{key}:</span>
+                        {Array.isArray(value) ? (
+                          <div className="flex flex-wrap gap-1">
+                            {value.map((item, index) => (
+                              <Badge key={index} variant="secondary" className="text-xs">
+                                {item}
+                              </Badge>
+                            ))}
+                          </div>
+                        ) : typeof value === 'boolean' ? (
+                          <Badge variant={value ? "secondary" : "outline"}>
+                            {value ? "Yes" : "No"}
+                          </Badge>
+                        ) : (
+                          <span className="text-sm">{String(value)}</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
               {viewing.comments && (
                 <div>
                   <div className="font-semibold mb-1">Comments</div>
