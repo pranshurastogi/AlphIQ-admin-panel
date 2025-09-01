@@ -131,6 +131,367 @@ export default function SubmissionsPage() {
   const [isReviewing, setIsReviewing] = useState(false)
   const { toast } = useToast()
 
+  // XP Verification State
+  const [isVerifying, setIsVerifying] = useState(false)
+  const [xpVerificationResults, setXpVerificationResults] = useState<{
+    totalDiscrepancies: number
+    totalXPDiscrepancy: number
+    discrepancies: Array<{
+      address: string
+      currentXP: number
+      expectedXP: number
+      difference: number
+    }>
+  } | null>(null)
+  const [xpVerificationModal, setXpVerificationModal] = useState(false)
+  const [isRepairing, setIsRepairing] = useState(false)
+  const [repairHistory, setRepairHistory] = useState<Array<{
+    timestamp: string
+    action: string
+    details: string
+    changes: Array<{
+      address: string
+      oldXP: number
+      newXP: number
+      difference: number
+    }>
+  }>>([])
+  const [showRepairConfirmation, setShowRepairConfirmation] = useState(false)
+
+  // Helper function to verify XP consistency across all users
+  const verifyXPConsistency = async () => {
+    try {
+      setIsVerifying(true)
+      console.log('🔍 Verifying XP consistency across all users...')
+      
+      // Get all users with their current admin_total_xp
+      const { data: users, error: usersError } = await supabase
+        .from('users')
+        .select('address, admin_total_xp')
+        .order('admin_total_xp', { ascending: false })
+
+      if (usersError) {
+        console.error('Error fetching users for XP verification:', usersError)
+        toast({
+          title: "Error",
+          description: "Failed to fetch users for XP verification",
+          variant: "destructive",
+        })
+        return
+      }
+
+      let totalDiscrepancies = 0
+      let totalXPDiscrepancy = 0
+      const discrepancies: Array<{
+        address: string
+        currentXP: number
+        expectedXP: number
+        difference: number
+      }> = []
+
+      for (const user of users) {
+        // Calculate expected XP from history
+        const { data: history, error: historyError } = await supabase
+          .from('admin_user_xp_history')
+          .select('change')
+          .eq('user_address', user.address)
+
+        if (historyError) {
+          console.error(`Error fetching XP history for ${user.address}:`, historyError)
+          continue
+        }
+
+        const expectedXP = history.reduce((sum, record) => sum + (record.change || 0), 0)
+        const currentXP = user.admin_total_xp || 0
+        const discrepancy = currentXP - expectedXP
+
+        if (discrepancy !== 0) {
+          totalDiscrepancies++
+          totalXPDiscrepancy += Math.abs(discrepancy)
+          discrepancies.push({
+            address: user.address,
+            currentXP,
+            expectedXP,
+            difference: discrepancy
+          })
+          console.warn(`⚠️ XP discrepancy for ${user.address}: Expected ${expectedXP}, Got ${currentXP}, Difference: ${discrepancy}`)
+        }
+      }
+
+      const results = {
+        totalDiscrepancies,
+        totalXPDiscrepancy,
+        discrepancies
+      }
+
+      setXpVerificationResults(results)
+
+      if (totalDiscrepancies === 0) {
+        console.log('✅ All users have consistent XP values!')
+        toast({
+          title: "XP Verification Complete",
+          description: "✅ All users have consistent XP values!",
+        })
+      } else {
+        console.warn(`⚠️ Found ${totalDiscrepancies} users with XP discrepancies. Total XP difference: ${totalXPDiscrepancy}`)
+        toast({
+          title: "XP Verification Complete",
+          description: `⚠️ Found ${totalDiscrepancies} users with XP discrepancies. Total XP difference: ${totalXPDiscrepancy}`,
+        })
+        // Open modal to show results
+        setXpVerificationModal(true)
+      }
+
+      return results
+    } catch (error) {
+      console.error('Error verifying XP consistency:', error)
+      toast({
+        title: "Error",
+        description: "Failed to verify XP consistency",
+        variant: "destructive",
+      })
+    } finally {
+      setIsVerifying(false)
+    }
+  }
+
+  // Helper function to repair XP discrepancies
+  const repairXPDiscrepancies = async () => {
+    if (!xpVerificationResults) return
+
+    try {
+      setIsRepairing(true)
+      console.log('🔧 Starting XP repair process...')
+
+      const changes: Array<{
+        address: string
+        oldXP: number
+        newXP: number
+        difference: number
+      }> = []
+
+      // Repair each discrepancy
+      for (const discrepancy of xpVerificationResults.discrepancies) {
+        const { error: updateError } = await supabase
+          .from('users')
+          .update({
+            admin_total_xp: discrepancy.expectedXP,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('address', discrepancy.address)
+
+        if (updateError) {
+          console.error(`Failed to repair XP for ${discrepancy.address}:`, updateError)
+          toast({
+            title: "Error",
+            description: `Failed to repair XP for ${discrepancy.address}`,
+            variant: "destructive",
+          })
+          continue
+        }
+
+        changes.push({
+          address: discrepancy.address,
+          oldXP: discrepancy.currentXP,
+          newXP: discrepancy.expectedXP,
+          difference: discrepancy.difference
+        })
+
+        console.log(`✅ Repaired XP for ${discrepancy.address}: ${discrepancy.currentXP} → ${discrepancy.expectedXP}`)
+      }
+
+      // Record repair action in history
+      const repairRecord = {
+        timestamp: new Date().toISOString(),
+        action: 'XP Repair',
+        details: `Fixed ${changes.length} XP discrepancies. Total XP difference: ${xpVerificationResults.totalXPDiscrepancy}`,
+        changes
+      }
+
+      setRepairHistory(prev => [repairRecord, ...prev])
+
+      // Show success message
+      toast({
+        title: "XP Repair Complete",
+        description: `✅ Successfully repaired ${changes.length} XP discrepancies!`,
+      })
+
+      // Close modal and refresh results
+      setXpVerificationModal(false)
+      setXpVerificationResults(null)
+
+      console.log('🔧 XP repair process completed successfully')
+
+    } catch (error) {
+      console.error('Error during XP repair:', error)
+      toast({
+        title: "Error",
+        description: "Failed to repair XP discrepancies",
+        variant: "destructive",
+      })
+    } finally {
+      setIsRepairing(false)
+    }
+  }
+
+  // Helper function to rollback last repair
+  const rollbackLastRepair = async () => {
+    if (repairHistory.length === 0) return
+
+    try {
+      const lastRepair = repairHistory[0]
+      console.log('🔄 Rolling back last XP repair...')
+
+      // Rollback each change
+      for (const change of lastRepair.changes) {
+        const { error: updateError } = await supabase
+          .from('users')
+          .update({
+            admin_total_xp: change.oldXP,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('address', change.address)
+
+        if (updateError) {
+          console.error(`Failed to rollback XP for ${change.address}:`, updateError)
+          toast({
+            title: "Error",
+            description: `Failed to rollback XP for ${change.address}`,
+            variant: "destructive",
+          })
+          continue
+        }
+
+        console.log(`🔄 Rolled back XP for ${change.address}: ${change.newXP} → ${change.oldXP}`)
+      }
+
+      // Remove from history
+      setRepairHistory(prev => prev.slice(1))
+
+      toast({
+        title: "Rollback Complete",
+        description: `✅ Successfully rolled back last XP repair!`,
+      })
+
+      console.log('🔄 XP rollback completed successfully')
+
+    } catch (error) {
+      console.error('Error during XP rollback:', error)
+      toast({
+        title: "Error",
+        description: "Failed to rollback XP changes",
+        variant: "destructive",
+      })
+    }
+  }
+
+  // Helper function to manage XP updates and verify consistency
+  const manageXPUpdate = async (userAddress: string, xpChange: number, submissionId: number, reason: string) => {
+    try {
+      // 1. Check if XP history already exists for this submission to prevent duplicates
+      const { data: existingHistory } = await supabase
+        .from('admin_user_xp_history')
+        .select('id')
+        .eq('submission_id', submissionId)
+        .eq('change', xpChange)
+        .single()
+
+      if (existingHistory) {
+        console.log(`XP history already exists for submission ${submissionId}, skipping duplicate`)
+        return { success: true, skipped: true, message: 'XP already awarded' }
+      }
+
+      // 2. Get current user XP before update
+      const { data: userBefore, error: userBeforeError } = await supabase
+        .from('users')
+        .select('admin_total_xp')
+        .eq('address', userAddress)
+        .single()
+
+      if (userBeforeError) {
+        console.error('Error getting user XP before update:', userBeforeError)
+        return { success: false, error: userBeforeError }
+      }
+
+      const xpBefore = userBefore?.admin_total_xp || 0
+
+      // 3. Add XP history record - the database trigger will automatically update admin_total_xp
+      const { error: historyError } = await supabase
+        .from('admin_user_xp_history')
+        .insert({
+          user_address: userAddress,
+          change: xpChange,
+          reason: reason,
+          submission_id: submissionId,
+        })
+
+      if (historyError) {
+        console.error('Error adding XP history:', historyError)
+        return { success: false, error: historyError }
+      }
+
+      // 4. Wait a moment for the database trigger to execute
+      await new Promise(resolve => setTimeout(resolve, 100))
+
+      // 5. Verify XP was updated correctly
+      const { data: userAfter, error: userAfterError } = await supabase
+        .from('users')
+        .select('admin_total_xp')
+        .eq('address', userAddress)
+        .single()
+
+      if (userAfterError) {
+        console.error('Error getting user XP after update:', userAfterError)
+        return { success: false, error: userAfterError }
+      }
+
+      const xpAfter = userAfter?.admin_total_xp || 0
+      const expectedXP = xpBefore + xpChange
+
+      // 6. Verify XP consistency
+      if (xpAfter !== expectedXP) {
+        console.error(`XP mismatch detected! Expected: ${expectedXP}, Got: ${xpAfter}`)
+        
+        // Try to fix the XP manually if the trigger failed
+        const { error: fixError } = await supabase
+          .from('users')
+          .update({
+            admin_total_xp: expectedXP,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('address', userAddress)
+
+        if (fixError) {
+          console.error('Failed to fix XP manually:', fixError)
+          return { 
+            success: false, 
+            error: new Error(`XP mismatch detected and couldn't be fixed. Expected: ${expectedXP}, Got: ${xpAfter}`)
+          }
+        }
+
+        console.log(`XP fixed manually: ${xpAfter} → ${expectedXP}`)
+        return { 
+          success: true, 
+          fixed: true, 
+          message: `XP updated: ${xpBefore} → ${expectedXP} (fixed manually)` 
+        }
+      }
+
+      console.log(`XP updated successfully: ${xpBefore} → ${xpAfter}`)
+      return { 
+        success: true, 
+        message: `XP updated: ${xpBefore} → ${xpAfter}`,
+        xpBefore,
+        xpAfter,
+        xpChange
+      }
+
+    } catch (error) {
+      console.error('Error in manageXPUpdate:', error)
+      return { success: false, error }
+    }
+  }
+
   // Fetch submissions based on user role - using direct Supabase access like quests page
   const fetchSubmissions = async () => {
     if (!profile) return
@@ -284,45 +645,27 @@ export default function SubmissionsPage() {
 
       // 2. Handle XP changes if needed
       if (xpChange !== 0) {
-        // Add XP history record
-        const { error: historyError } = await supabase
-          .from('admin_user_xp_history')
-          .insert({
-            user_address: submission.user_address,
-            change: xpChange,
-            reason: xpHistoryReason,
-            submission_id: submission.id,
-          })
+        // Use the helper function to manage XP updates and verify consistency
+        const xpResult = await manageXPUpdate(submission.user_address, xpChange, submission.id, xpHistoryReason)
 
-        if (historyError) {
-          throw historyError
+        if (!xpResult.success) {
+          console.error('Error managing XP update:', xpResult.error)
+          toast({
+            title: "Error",
+            description: "Failed to update XP and submission status",
+            variant: "destructive",
+          })
+          return
         }
 
-        // Get current user XP and update it
-        const { data: userData, error: userError } = await supabase
-          .from('users')
-          .select('admin_total_xp')
-          .eq('address', submission.user_address)
-          .single()
-
-        if (userError) {
-          throw userError
+        // Log XP update result
+        if (xpResult.fixed) {
+          console.warn(`⚠️ XP was fixed manually: ${xpResult.message}`)
+        } else if (xpResult.skipped) {
+          console.log(`ℹ️ XP update skipped: ${xpResult.message}`)
+        } else {
+          console.log(`✅ XP updated successfully: ${xpResult.message}`)
         }
-
-        const currentXP = userData?.admin_total_xp || 0
-        const newXP = currentXP + xpChange
-
-        const { error: updateError } = await supabase
-          .from('users')
-          .update({
-            admin_total_xp: newXP,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('address', submission.user_address)
-
-        if (updateError) {
-          throw updateError
-                }
       }
 
       // Update local state
@@ -418,47 +761,21 @@ export default function SubmissionsPage() {
 
         // Handle XP for approved submissions
         if (action === "approve" && xpChange > 0) {
-          // Add XP history record
-          const { error: historyError } = await supabase
-            .from('admin_user_xp_history')
-            .insert({
-              user_address: submission.user_address,
-              change: xpChange,
-              reason: xpHistoryReason,
-              submission_id: submissionId,
-            })
+          // Use the helper function to manage XP updates and verify consistency
+          const xpResult = await manageXPUpdate(submission.user_address, xpChange, submissionId, xpHistoryReason)
 
-          if (historyError) {
-            console.error(`Error adding XP history for submission ${submissionId}:`, historyError)
+          if (!xpResult.success) {
+            console.error(`Error managing XP update for submission ${submissionId}:`, xpResult.error)
             continue
           }
 
-          // Get current user XP and update it
-          const { data: userData, error: userError } = await supabase
-            .from('users')
-            .select('admin_total_xp')
-            .eq('address', submission.user_address)
-            .single()
-
-          if (userError) {
-            console.error(`Error getting user XP for submission ${submissionId}:`, userError)
-            continue
-          }
-
-          const currentXP = userData?.admin_total_xp || 0
-          const newXP = currentXP + xpChange
-
-          const { error: updateError } = await supabase
-            .from('users')
-            .update({
-              admin_total_xp: newXP,
-              updated_at: new Date().toISOString(),
-            })
-            .eq('address', submission.user_address)
-
-          if (updateError) {
-            console.error(`Error updating user XP for submission ${submissionId}:`, updateError)
-            continue
+          // Log XP update result
+          if (xpResult.fixed) {
+            console.warn(`⚠️ XP was fixed manually for submission ${submissionId}: ${xpResult.message}`)
+          } else if (xpResult.skipped) {
+            console.log(`ℹ️ XP update skipped for submission ${submissionId}: ${xpResult.message}`)
+          } else {
+            console.log(`✅ XP updated successfully for submission ${submissionId}: ${xpResult.message}`)
           }
 
           totalXPAwarded += xpChange
@@ -650,14 +967,25 @@ export default function SubmissionsPage() {
             Review and approve quest submissions from users
           </p>
         </div>
-        <Button
-          variant="outline"
-          onClick={fetchSubmissions}
-          disabled={loading}
-        >
-          <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
-          Refresh
-        </Button>
+        <div className="flex items-center space-x-2">
+          <Button
+            variant="outline"
+            onClick={verifyXPConsistency}
+            disabled={loading || isVerifying}
+            title="Verify XP consistency across all users"
+          >
+            <CheckCircle className="h-4 w-4 mr-2" />
+            Verify XP {isVerifying && '(Verifying...)'}
+          </Button>
+          <Button
+            variant="outline"
+            onClick={fetchSubmissions}
+            disabled={loading}
+          >
+            <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
+            Refresh
+          </Button>
+        </div>
       </div>
 
       {/* Stats Cards */}
@@ -1212,6 +1540,122 @@ export default function SubmissionsPage() {
           </div>
         </CardContent>
       </Card>
+
+      {/* XP Verification Results Modal */}
+      {xpVerificationModal && xpVerificationResults && (
+        <Dialog open={xpVerificationModal} onOpenChange={setXpVerificationModal}>
+          <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>XP Verification Results</DialogTitle>
+              <DialogDescription>
+                Summary of XP discrepancies found and potential repairs.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-semibold">Summary</h3>
+                <Badge variant="outline" className="text-xs">
+                  Total Discrepancies: {xpVerificationResults.totalDiscrepancies}
+                </Badge>
+              </div>
+              <p className="text-sm text-muted-foreground">
+                Found {xpVerificationResults.totalDiscrepancies} users with XP discrepancies.
+                Total XP difference: {xpVerificationResults.totalXPDiscrepancy}.
+              </p>
+
+              <h3 className="text-lg font-semibold">Detailed Discrepancies</h3>
+              {xpVerificationResults.discrepancies.length === 0 ? (
+                <p className="text-muted-foreground">No XP discrepancies found.</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-40">User Address</TableHead>
+                        <TableHead className="w-20">Current XP</TableHead>
+                        <TableHead className="w-20">Expected XP</TableHead>
+                        <TableHead className="w-20">Difference</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {xpVerificationResults.discrepancies.map((discrepancy, index) => (
+                        <TableRow key={index}>
+                          <TableCell>{discrepancy.address}</TableCell>
+                          <TableCell>{discrepancy.currentXP}</TableCell>
+                          <TableCell>{discrepancy.expectedXP}</TableCell>
+                          <TableCell className={`font-mono ${discrepancy.difference > 0 ? 'text-red-500' : 'text-green-500'}`}>
+                            {discrepancy.difference}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+
+              <h3 className="text-lg font-semibold">Repair Options</h3>
+              <p className="text-sm text-muted-foreground">
+                Click "Repair XP" to attempt to fix these discrepancies.
+                This will update the admin_total_xp for all users with discrepancies.
+              </p>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  onClick={repairXPDiscrepancies}
+                  disabled={isRepairing}
+                >
+                  <Star className="h-4 w-4 mr-2" />
+                  Repair XP
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={rollbackLastRepair}
+                  disabled={isRepairing || repairHistory.length === 0}
+                >
+                  <RefreshCw className="h-4 w-4 mr-2" />
+                  Rollback
+                </Button>
+              </div>
+
+              <h3 className="text-lg font-semibold">Repair History</h3>
+              {repairHistory.length === 0 ? (
+                <p className="text-muted-foreground">No XP repairs have been performed yet.</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-32">Timestamp</TableHead>
+                        <TableHead className="w-16">Action</TableHead>
+                        <TableHead className="w-40">Details</TableHead>
+                        <TableHead className="w-40">Changes</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {repairHistory.map((record, index) => (
+                        <TableRow key={index}>
+                          <TableCell>{formatDate(record.timestamp)}</TableCell>
+                          <TableCell>{record.action}</TableCell>
+                          <TableCell>{record.details}</TableCell>
+                          <TableCell>
+                            <div className="flex flex-col space-y-1">
+                              {record.changes.map((change, subIndex) => (
+                                <div key={subIndex} className="text-xs text-muted-foreground">
+                                  {change.address}: {change.oldXP} → {change.newXP} (Difference: {change.difference})
+                                </div>
+                              ))}
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   )
 }
