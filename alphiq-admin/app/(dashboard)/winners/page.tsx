@@ -97,7 +97,7 @@ interface Winner {
   exchange_rate_usd: number | null
   pricing_source: string | null
   priced_at: string | null
-  status: "pending" | "awarded" | "failed" | "cancelled"
+  status: "pending" | "approved" | "claimable" | "paid" | "failed" | "expired" | "cancelled" | "rejected" | "revoked"
   comments: string | null
   tx_hash: string | null
   proof_url: string | null
@@ -128,9 +128,14 @@ interface Winner {
 interface WinnerStats {
   total: number
   pending: number
-  awarded: number
+  approved: number
+  claimable: number
+  paid: number
   failed: number
+  expired: number
   cancelled: number
+  rejected: number
+  revoked: number
   totalAmount: number
   totalAmountUSD: number
 }
@@ -154,7 +159,7 @@ export default function WinnersPage() {
     approx_amount_usd: '',
     exchange_rate_usd: '',
     pricing_source: '',
-    status: 'pending' as 'pending' | 'awarded' | 'failed' | 'cancelled',
+    status: 'pending' as 'pending' | 'approved' | 'claimable' | 'paid' | 'failed' | 'expired' | 'cancelled' | 'rejected' | 'revoked',
     comments: '',
     tx_hash: '',
     proof_url: '',
@@ -164,9 +169,14 @@ export default function WinnersPage() {
   const [stats, setStats] = useState<WinnerStats>({
     total: 0,
     pending: 0,
-    awarded: 0,
+    approved: 0,
+    claimable: 0,
+    paid: 0,
     failed: 0,
+    expired: 0,
     cancelled: 0,
+    rejected: 0,
+    revoked: 0,
     totalAmount: 0,
     totalAmountUSD: 0,
   })
@@ -238,9 +248,14 @@ export default function WinnersPage() {
       const stats = {
         total: validWinners.length,
         pending: validWinners.filter((w: Winner) => w.status === 'pending').length,
-        awarded: validWinners.filter((w: Winner) => w.status === 'awarded').length,
+        approved: validWinners.filter((w: Winner) => w.status === 'approved').length,
+        claimable: validWinners.filter((w: Winner) => w.status === 'claimable').length,
+        paid: validWinners.filter((w: Winner) => w.status === 'paid').length,
         failed: validWinners.filter((w: Winner) => w.status === 'failed').length,
+        expired: validWinners.filter((w: Winner) => w.status === 'expired').length,
         cancelled: validWinners.filter((w: Winner) => w.status === 'cancelled').length,
+        rejected: validWinners.filter((w: Winner) => w.status === 'rejected').length,
+        revoked: validWinners.filter((w: Winner) => w.status === 'revoked').length,
         totalAmount: validWinners.reduce((sum, w: Winner) => sum + (w.winning_amount || 0), 0),
         totalAmountUSD: validWinners.reduce((sum, w: Winner) => sum + (w.approx_amount_usd || 0), 0),
       }
@@ -293,14 +308,24 @@ export default function WinnersPage() {
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case "awarded":
+      case "approved":
+        return "default"
+      case "claimable":
+        return "default"
+      case "paid":
         return "default"
       case "pending":
         return "secondary"
       case "failed":
         return "destructive"
+      case "expired":
+        return "destructive"
       case "cancelled":
         return "outline"
+      case "rejected":
+        return "destructive"
+      case "revoked":
+        return "destructive"
       default:
         return "outline"
     }
@@ -308,14 +333,24 @@ export default function WinnersPage() {
 
   const getStatusIcon = (status: string) => {
     switch (status) {
-      case "awarded":
+      case "approved":
+        return <CheckCircle className="h-4 w-4" />
+      case "claimable":
+        return <CheckCircle className="h-4 w-4" />
+      case "paid":
         return <CheckCircle className="h-4 w-4" />
       case "pending":
         return <Clock className="h-4 w-4" />
       case "failed":
         return <XCircle className="h-4 w-4" />
+      case "expired":
+        return <XCircle className="h-4 w-4" />
       case "cancelled":
         return <X className="h-4 w-4" />
+      case "rejected":
+        return <XCircle className="h-4 w-4" />
+      case "revoked":
+        return <XCircle className="h-4 w-4" />
       default:
         return <AlertCircle className="h-4 w-4" />
     }
@@ -410,6 +445,12 @@ export default function WinnersPage() {
         return
       }
 
+      console.log('Updating winner with data:', {
+        winner_id: editingWinner.winner_id,
+        status: editForm.status,
+        formData: editForm
+      })
+
       // Update winner record
       const { data: winner, error } = await supabase
         .from('admin_quest_winners')
@@ -433,9 +474,15 @@ export default function WinnersPage() {
 
       if (error) {
         console.error('Error updating winner:', error)
+        console.error('Error details:', {
+          message: error.message,
+          details: error.details,
+          hint: error.hint,
+          code: error.code
+        })
         toast({
           title: "Error",
-          description: "Failed to update winner record",
+          description: `Failed to update winner record: ${error.message}`,
           variant: "destructive",
         })
         return
@@ -740,8 +787,34 @@ export default function WinnersPage() {
                 <CheckCircle className="h-4 w-4 text-green-600" />
               </div>
               <div>
-                <p className="text-sm font-medium text-muted-foreground">Awarded</p>
-                <p className="text-2xl font-bold">{stats.awarded}</p>
+                <p className="text-sm font-medium text-muted-foreground">Approved</p>
+                <p className="text-2xl font-bold">{stats.approved}</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-6">
+            <div className="flex items-center space-x-2">
+              <div className="p-2 bg-blue-100 rounded-lg">
+                <CheckCircle className="h-4 w-4 text-blue-600" />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-muted-foreground">Claimable</p>
+                <p className="text-2xl font-bold">{stats.claimable}</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-6">
+            <div className="flex items-center space-x-2">
+              <div className="p-2 bg-emerald-100 rounded-lg">
+                <CheckCircle className="h-4 w-4 text-emerald-600" />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-muted-foreground">Paid</p>
+                <p className="text-2xl font-bold">{stats.paid}</p>
               </div>
             </div>
           </CardContent>
@@ -755,6 +828,58 @@ export default function WinnersPage() {
               <div>
                 <p className="text-sm font-medium text-muted-foreground">Failed</p>
                 <p className="text-2xl font-bold">{stats.failed}</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-6">
+            <div className="flex items-center space-x-2">
+              <div className="p-2 bg-orange-100 rounded-lg">
+                <XCircle className="h-4 w-4 text-orange-600" />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-muted-foreground">Expired</p>
+                <p className="text-2xl font-bold">{stats.expired}</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-6">
+            <div className="flex items-center space-x-2">
+              <div className="p-2 bg-gray-100 rounded-lg">
+                <X className="h-4 w-4 text-gray-600" />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-muted-foreground">Cancelled</p>
+                <p className="text-2xl font-bold">{stats.cancelled}</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-6">
+            <div className="flex items-center space-x-2">
+              <div className="p-2 bg-red-100 rounded-lg">
+                <XCircle className="h-4 w-4 text-red-600" />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-muted-foreground">Rejected</p>
+                <p className="text-2xl font-bold">{stats.rejected}</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-6">
+            <div className="flex items-center space-x-2">
+              <div className="p-2 bg-red-100 rounded-lg">
+                <XCircle className="h-4 w-4 text-red-600" />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-muted-foreground">Revoked</p>
+                <p className="text-2xl font-bold">{stats.revoked}</p>
               </div>
             </div>
           </CardContent>
@@ -826,9 +951,14 @@ export default function WinnersPage() {
                 <SelectContent>
                   <SelectItem value="all">All Status</SelectItem>
                   <SelectItem value="pending">Pending</SelectItem>
-                  <SelectItem value="awarded">Awarded</SelectItem>
+                  <SelectItem value="approved">Approved</SelectItem>
+                  <SelectItem value="claimable">Claimable</SelectItem>
+                  <SelectItem value="paid">Paid</SelectItem>
                   <SelectItem value="failed">Failed</SelectItem>
+                  <SelectItem value="expired">Expired</SelectItem>
                   <SelectItem value="cancelled">Cancelled</SelectItem>
+                  <SelectItem value="rejected">Rejected</SelectItem>
+                  <SelectItem value="revoked">Revoked</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -1434,18 +1564,24 @@ export default function WinnersPage() {
                   <Label htmlFor="edit_status">Status</Label>
                   <Select
                     value={editForm.status}
-                    onValueChange={(value: 'pending' | 'awarded' | 'failed' | 'cancelled') => 
+                    onValueChange={(value: 'pending' | 'approved' | 'claimable' | 'paid' | 'failed' | 'expired' | 'cancelled' | 'rejected' | 'revoked') => {
+                      console.log('Status changed to:', value)
                       setEditForm(prev => ({ ...prev, status: value }))
-                    }
+                    }}
                   >
                     <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="pending">Pending</SelectItem>
-                      <SelectItem value="awarded">Awarded</SelectItem>
+                      <SelectItem value="approved">Approved</SelectItem>
+                      <SelectItem value="claimable">Claimable</SelectItem>
+                      <SelectItem value="paid">Paid</SelectItem>
                       <SelectItem value="failed">Failed</SelectItem>
+                      <SelectItem value="expired">Expired</SelectItem>
                       <SelectItem value="cancelled">Cancelled</SelectItem>
+                      <SelectItem value="rejected">Rejected</SelectItem>
+                      <SelectItem value="revoked">Revoked</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>

@@ -179,7 +179,7 @@ export default function SubmissionsPage() {
     approx_amount_usd: '',
     exchange_rate_usd: '',
     pricing_source: '',
-    status: 'pending' as 'pending' | 'awarded' | 'failed' | 'cancelled',
+    status: 'pending' as 'pending' | 'approved' | 'claimable' | 'paid' | 'failed' | 'expired' | 'cancelled' | 'rejected' | 'revoked',
     comments: '',
     tx_hash: '',
     proof_url: '',
@@ -196,7 +196,7 @@ export default function SubmissionsPage() {
     approx_amount_usd: '',
     exchange_rate_usd: '',
     pricing_source: '',
-    status: 'pending' as 'pending' | 'awarded' | 'failed' | 'cancelled',
+    status: 'pending' as 'pending' | 'approved' | 'claimable' | 'paid' | 'failed' | 'expired' | 'cancelled' | 'rejected' | 'revoked',
     comments: '',
     tx_hash: '',
     proof_url: '',
@@ -1221,6 +1221,12 @@ export default function SubmissionsPage() {
         return
       }
 
+      console.log('Updating winner from submission with data:', {
+        winner_id: editingWinnerFromSubmission.winner.winner_id,
+        status: editWinnerForm.status,
+        formData: editWinnerForm
+      })
+
       // Update winner record
       const { data: winner, error } = await supabase
         .from('admin_quest_winners')
@@ -1244,9 +1250,15 @@ export default function SubmissionsPage() {
 
       if (error) {
         console.error('Error updating winner:', error)
+        console.error('Error details:', {
+          message: error.message,
+          details: error.details,
+          hint: error.hint,
+          code: error.code
+        })
         toast({
           title: "Error",
-          description: "Failed to update winner record",
+          description: `Failed to update winner record: ${error.message}`,
           variant: "destructive",
         })
         return
@@ -2263,7 +2275,7 @@ export default function SubmissionsPage() {
                   <Label htmlFor="status">Status</Label>
                   <Select
                     value={winnerForm.status}
-                    onValueChange={(value: 'pending' | 'awarded' | 'failed' | 'cancelled') => 
+                    onValueChange={(value: 'pending' | 'approved' | 'claimable' | 'paid' | 'failed' | 'expired' | 'cancelled' | 'rejected' | 'revoked') => 
                       setWinnerForm(prev => ({ ...prev, status: value }))
                     }
                   >
@@ -2272,7 +2284,12 @@ export default function SubmissionsPage() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="pending">Pending</SelectItem>
-                      <SelectItem value="awarded">Awarded</SelectItem>
+                      <SelectItem value="approved">Approved</SelectItem>
+                      <SelectItem value="claimable">Claimable</SelectItem>
+                      <SelectItem value="paid">Paid</SelectItem>
+                      <SelectItem value="expired">Expired</SelectItem>
+                      <SelectItem value="rejected">Rejected</SelectItem>
+                      <SelectItem value="revoked">Revoked</SelectItem>
                       <SelectItem value="failed">Failed</SelectItem>
                       <SelectItem value="cancelled">Cancelled</SelectItem>
                     </SelectContent>
@@ -2505,16 +2522,22 @@ export default function SubmissionsPage() {
                   <Label htmlFor="edit_sub_status">Status</Label>
                   <Select
                     value={editWinnerForm.status}
-                    onValueChange={(value: 'pending' | 'awarded' | 'failed' | 'cancelled') => 
+                    onValueChange={(value: 'pending' | 'approved' | 'claimable' | 'paid' | 'failed' | 'expired' | 'cancelled' | 'rejected' | 'revoked') => {
+                      console.log('Status changed to:', value)
                       setEditWinnerForm(prev => ({ ...prev, status: value }))
-                    }
+                    }}
                   >
                     <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="pending">Pending</SelectItem>
-                      <SelectItem value="awarded">Awarded</SelectItem>
+                      <SelectItem value="approved">Approved</SelectItem>
+                      <SelectItem value="claimable">Claimable</SelectItem>
+                      <SelectItem value="paid">Paid</SelectItem>
+                      <SelectItem value="expired">Expired</SelectItem>
+                      <SelectItem value="rejected">Rejected</SelectItem>
+                      <SelectItem value="revoked">Revoked</SelectItem>
                       <SelectItem value="failed">Failed</SelectItem>
                       <SelectItem value="cancelled">Cancelled</SelectItem>
                     </SelectContent>
