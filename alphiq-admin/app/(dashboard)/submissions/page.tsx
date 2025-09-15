@@ -36,6 +36,12 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet"
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -68,6 +74,10 @@ import {
   Star,
   RefreshCw,
   AlertTriangle,
+  FileDown,
+  Crown,
+  Coins,
+  DollarSign,
 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { useAuth } from "@/components/auth-provider"
@@ -157,6 +167,23 @@ export default function SubmissionsPage() {
     }>
   }>>([])
   const [showRepairConfirmation, setShowRepairConfirmation] = useState(false)
+
+  // Winner Selection State
+  const [selectingWinner, setSelectingWinner] = useState<Submission | null>(null)
+  const [winnerForm, setWinnerForm] = useState({
+    display_name: '',
+    winning_amount: '',
+    winning_token: 'ALPH',
+    approx_amount_usd: '',
+    exchange_rate_usd: '',
+    pricing_source: '',
+    status: 'pending' as 'pending' | 'awarded' | 'failed' | 'cancelled',
+    comments: '',
+    tx_hash: '',
+    proof_url: '',
+  })
+  const [isCreatingWinner, setIsCreatingWinner] = useState(false)
+  const [winnerSubmissions, setWinnerSubmissions] = useState<Set<number>>(new Set())
 
   // Helper function to verify XP consistency across all users
   const verifyXPConsistency = async () => {
@@ -539,6 +566,19 @@ export default function SubmissionsPage() {
       const validSubmissions = (submissions || []).filter(s => s.quest)
 
       setSubmissions(validSubmissions)
+      
+      // Check which submissions are already winners
+      const submissionIds = validSubmissions.map(s => s.id)
+      if (submissionIds.length > 0) {
+        const { data: winners } = await supabase
+          .from('admin_quest_winners')
+          .select('submission_id')
+          .in('submission_id', submissionIds)
+          .not('submission_id', 'is', null)
+        
+        const winnerSubmissionIds = new Set((winners || []).map(w => w.submission_id))
+        setWinnerSubmissions(winnerSubmissionIds)
+      }
       
       // Calculate stats
       const stats = {
@@ -940,6 +980,270 @@ export default function SubmissionsPage() {
     return submission.quest.created_by === profile.id
   }
 
+  const canSelectWinner = (submission: Submission) => {
+    if (!profile) return false
+    
+    // Super admin can select winners for all submissions
+    if (profile.role === 'super_admin') return true
+    
+    // Sub admin can only select winners for quests they created
+    if (profile.role === 'sub_admin' && submission.quest.created_by === profile.id) return true
+    
+    return false
+  }
+
+  const handleSelectWinner = (submission: Submission) => {
+    setSelectingWinner(submission)
+    // Pre-fill form with submission data
+    setWinnerForm({
+      display_name: '',
+      winning_amount: '',
+      winning_token: 'ALPH',
+      approx_amount_usd: '',
+      exchange_rate_usd: '',
+      pricing_source: '',
+      status: 'pending',
+      comments: '',
+      tx_hash: '',
+      proof_url: submission.proof_url,
+    })
+  }
+
+  const handleCreateWinner = async () => {
+    if (!selectingWinner || !profile) return
+
+    setIsCreatingWinner(true)
+    try {
+      // Validate required fields
+      if (!winnerForm.winning_amount || parseFloat(winnerForm.winning_amount) <= 0) {
+        toast({
+          title: "Error",
+          description: "Please enter a valid winning amount",
+          variant: "destructive",
+        })
+        return
+      }
+
+      // Check if winner already exists for this quest and user
+      const { data: existingWinner } = await supabase
+        .from('admin_quest_winners')
+        .select('winner_id')
+        .eq('quest_id', selectingWinner.quest_id)
+        .eq('user_address', selectingWinner.user_address)
+        .single()
+
+      if (existingWinner) {
+        toast({
+          title: "Error",
+          description: "Winner already exists for this quest and user",
+          variant: "destructive",
+        })
+        return
+      }
+
+      // Create winner record
+      const { data: winner, error } = await supabase
+        .from('admin_quest_winners')
+        .insert({
+          quest_id: selectingWinner.quest_id,
+          submission_id: selectingWinner.id,
+          user_address: selectingWinner.user_address,
+          display_name: winnerForm.display_name || null,
+          info: null,
+          winning_amount: parseFloat(winnerForm.winning_amount),
+          winning_token: winnerForm.winning_token || null,
+          approx_amount_usd: winnerForm.approx_amount_usd ? parseFloat(winnerForm.approx_amount_usd) : null,
+          exchange_rate_usd: winnerForm.exchange_rate_usd ? parseFloat(winnerForm.exchange_rate_usd) : null,
+          pricing_source: winnerForm.pricing_source || null,
+          priced_at: winnerForm.pricing_source ? new Date().toISOString() : null,
+          status: winnerForm.status,
+          comments: winnerForm.comments || null,
+          tx_hash: winnerForm.tx_hash || null,
+          proof_url: winnerForm.proof_url || null,
+          awarded_by: profile.id,
+          awarded_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .select()
+        .single()
+
+      if (error) {
+        console.error('Error creating winner:', error)
+        toast({
+          title: "Error",
+          description: "Failed to create winner record",
+          variant: "destructive",
+        })
+        return
+      }
+
+      toast({
+        title: "Winner Selected",
+        description: `Successfully selected ${selectingWinner.user_address} as winner for "${selectingWinner.quest.title}"`,
+      })
+
+      // Update local state to mark this submission as a winner
+      setWinnerSubmissions(prev => new Set([...prev, selectingWinner.id]))
+
+      // Reset form and close dialog
+      setSelectingWinner(null)
+      setWinnerForm({
+        display_name: '',
+        winning_amount: '',
+        winning_token: 'ALPH',
+        approx_amount_usd: '',
+        exchange_rate_usd: '',
+        pricing_source: '',
+        status: 'pending',
+        comments: '',
+        tx_hash: '',
+        proof_url: '',
+      })
+
+    } catch (error) {
+      console.error('Error creating winner:', error)
+      toast({
+        title: "Error",
+        description: "Failed to create winner record",
+        variant: "destructive",
+      })
+    } finally {
+      setIsCreatingWinner(false)
+    }
+  }
+
+  // CSV Export functionality with different export types
+  const exportToCSV = (exportType: 'full' | 'summary' | 'selected' = 'full') => {
+    try {
+      let dataToExport: any[] = []
+      let filename = ''
+
+      // Determine which data to export
+      if (exportType === 'selected' && selectedSubmissions.length > 0) {
+        dataToExport = submissions
+          .filter(s => selectedSubmissions.includes(s.id))
+          .map(submission => createExportRow(submission))
+        filename = `submissions_selected_${new Date().toISOString().split('T')[0]}.csv`
+      } else if (exportType === 'summary') {
+        dataToExport = filteredSubmissions.map(submission => ({
+          'Submission ID': submission.id,
+          'User Address': submission.user_address,
+          'Quest Title': submission.quest.title,
+          'Category': submission.quest.category?.name || 'Unknown',
+          'Total XP': submission.quest.xp_reward * submission.quest.multiplier,
+          'Status': submission.status,
+          'Submitted At': formatDate(submission.submitted_at),
+          'Reviewed At': submission.reviewed_at ? formatDate(submission.reviewed_at) : '',
+        }))
+        filename = `submissions_summary_${new Date().toISOString().split('T')[0]}${getFilterInfo()}.csv`
+      } else {
+        // Full export
+        dataToExport = filteredSubmissions.map(submission => createExportRow(submission))
+        filename = `submissions_full_${new Date().toISOString().split('T')[0]}${getFilterInfo()}.csv`
+      }
+
+      if (dataToExport.length === 0) {
+        toast({
+          title: "No Data to Export",
+          description: "No submissions match the current filters",
+          variant: "destructive",
+        })
+        return
+      }
+
+      // Create CSV content with proper formatting and BOM for Excel compatibility
+      const headers = Object.keys(dataToExport[0] || {})
+      const csvContent = [
+        // BOM for UTF-8 (helps with Excel compatibility)
+        '\uFEFF',
+        // Header row
+        headers.join(','),
+        // Data rows
+        ...dataToExport.map(row => 
+          headers.map(header => {
+            const value = row[header as keyof typeof row]
+            // Escape commas, quotes, and newlines in CSV
+            if (typeof value === 'string' && (value.includes(',') || value.includes('"') || value.includes('\n'))) {
+              return `"${value.replace(/"/g, '""')}"`
+            }
+            return value
+          }).join(',')
+        )
+      ].join('\n')
+
+      // Create and download file
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+      const link = document.createElement('a')
+      const url = URL.createObjectURL(blob)
+      link.setAttribute('href', url)
+      link.setAttribute('download', filename)
+      link.style.visibility = 'hidden'
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+
+      toast({
+        title: "Export Successful",
+        description: `Exported ${dataToExport.length} submissions to CSV (${exportType} format)`,
+      })
+    } catch (error) {
+      console.error('Error exporting CSV:', error)
+      toast({
+        title: "Export Failed",
+        description: "Failed to export submissions to CSV",
+        variant: "destructive",
+      })
+    }
+  }
+
+  // Helper function to create a full export row
+  const createExportRow = (submission: Submission) => ({
+    'Submission ID': submission.id,
+    'User Address': submission.user_address,
+    'Quest ID': submission.quest_id,
+    'Quest Title': submission.quest.title,
+    'Quest Description': submission.quest.description.replace(/\n/g, ' ').replace(/,/g, ';'),
+    'Category': submission.quest.category?.name || 'Unknown',
+    'XP Reward': submission.quest.xp_reward,
+    'Multiplier': submission.quest.multiplier,
+    'Total XP': submission.quest.xp_reward * submission.quest.multiplier,
+    'Status': submission.status,
+    'Submitted At': formatDate(submission.submitted_at),
+    'Reviewed By': submission.reviewed_by || '',
+    'Reviewed At': submission.reviewed_at ? formatDate(submission.reviewed_at) : '',
+    'Review Notes': submission.review_notes ? submission.review_notes.replace(/\n/g, ' ').replace(/,/g, ';') : '',
+    'Proof URL': submission.proof_url,
+    'Proof Type': getProofTypeText(submission.proof_url),
+    'Has Proof Data': submission.proof_data ? 'Yes' : 'No',
+    'Quest Creator': submission.quest.creator?.full_name || submission.quest.created_by,
+    'Quest Active': submission.quest.is_active ? 'Yes' : 'No',
+    'Export Date': new Date().toISOString(),
+    'Filter Applied': getFilterInfo().replace('_', '') || 'None'
+  })
+
+  // Helper function to get proof type as text
+  const getProofTypeText = (proofUrl: string) => {
+    if (proofUrl.startsWith('http')) {
+      return 'Link'
+    } else if (proofUrl.includes('.jpg') || proofUrl.includes('.png') || proofUrl.includes('.jpeg')) {
+      return 'Image'
+    } else {
+      return 'File'
+    }
+  }
+
+  // Helper function to generate filter info for filename
+  const getFilterInfo = () => {
+    const filters = []
+    if (searchTerm) filters.push('search')
+    if (statusFilter !== 'all') filters.push(`status-${statusFilter}`)
+    if (categoryFilter !== 'all') filters.push(`category-${categoryFilter}`)
+    if (createdByFilter !== 'all') filters.push('creator-filtered')
+    if (questFilter !== 'all') filters.push('quest-filtered')
+    
+    return filters.length > 0 ? `_${filters.join('_')}` : '_all'
+  }
+
   if (loading) {
     return (
       <div className="space-y-6">
@@ -968,6 +1272,41 @@ export default function SubmissionsPage() {
           </p>
         </div>
         <div className="flex items-center space-x-2">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="outline"
+                disabled={loading || filteredSubmissions.length === 0}
+                title="Export submissions to CSV"
+              >
+                <FileDown className="h-4 w-4 mr-2" />
+                Export CSV
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem
+                onClick={() => exportToCSV('full')}
+                disabled={filteredSubmissions.length === 0}
+              >
+                <FileText className="h-4 w-4 mr-2" />
+                Full Export ({filteredSubmissions.length} records)
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => exportToCSV('summary')}
+                disabled={filteredSubmissions.length === 0}
+              >
+                <Download className="h-4 w-4 mr-2" />
+                Summary Export ({filteredSubmissions.length} records)
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => exportToCSV('selected')}
+                disabled={selectedSubmissions.length === 0}
+              >
+                <CheckCircle className="h-4 w-4 mr-2" />
+                Selected Only ({selectedSubmissions.length} records)
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <Button
             variant="outline"
             onClick={verifyXPConsistency}
@@ -1046,10 +1385,24 @@ export default function SubmissionsPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>All Submissions</CardTitle>
-          <CardDescription>
-            Review quest submissions and manage approvals
-          </CardDescription>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle>All Submissions</CardTitle>
+              <CardDescription>
+                Review quest submissions and manage approvals
+                {filteredSubmissions.length !== submissions.length && (
+                  <span className="ml-2 text-blue-600 font-medium">
+                    ({filteredSubmissions.length} of {submissions.length} shown)
+                  </span>
+                )}
+              </CardDescription>
+            </div>
+            <div className="text-right">
+              <p className="text-sm text-muted-foreground">
+                CSV export respects current filters
+              </p>
+            </div>
+          </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
             <div className="flex items-center space-x-2">
               <Search className="h-4 w-4 text-muted-foreground" />
@@ -1364,6 +1717,27 @@ export default function SubmissionsPage() {
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-2">
+                        {submission.status === 'approved' && canSelectWinner(submission) && (
+                          <>
+                            {winnerSubmissions.has(submission.id) ? (
+                              <Badge variant="default" className="bg-purple-100 text-purple-700 border-purple-200">
+                                <Crown className="h-3 w-3 mr-1" />
+                                Winner
+                              </Badge>
+                            ) : (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleSelectWinner(submission)}
+                                disabled={isCreatingWinner}
+                                className="text-purple-600 hover:text-purple-700 hover:bg-purple-50"
+                                title="Select as Winner"
+                              >
+                                <Crown className="h-4 w-4" />
+                              </Button>
+                            )}
+                          </>
+                        )}
                         {submission.status === 'pending' && canReviewSubmission(submission) && (
                           <>
                             <Button
@@ -1540,6 +1914,217 @@ export default function SubmissionsPage() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Winner Selection Dialog */}
+      {selectingWinner && (
+        <Dialog open={!!selectingWinner} onOpenChange={() => setSelectingWinner(null)}>
+          <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Crown className="h-5 w-5 text-purple-600" />
+                Select Winner
+              </DialogTitle>
+              <DialogDescription>
+                Select this submission as a winner and configure the reward details
+              </DialogDescription>
+            </DialogHeader>
+            
+            <div className="space-y-6">
+              {/* Submission Info */}
+              <div className="p-4 bg-muted rounded-lg">
+                <h3 className="font-semibold mb-2">Submission Details</h3>
+                <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div>
+                    <Label className="text-muted-foreground">User Address</Label>
+                    <p className="font-mono break-all">{selectingWinner.user_address}</p>
+                  </div>
+                  <div>
+                    <Label className="text-muted-foreground">Quest</Label>
+                    <p className="font-medium">{selectingWinner.quest.title}</p>
+                  </div>
+                  <div>
+                    <Label className="text-muted-foreground">Submitted At</Label>
+                    <p>{formatDate(selectingWinner.submitted_at)}</p>
+                  </div>
+                  <div>
+                    <Label className="text-muted-foreground">XP Reward</Label>
+                    <p>{selectingWinner.quest.xp_reward * selectingWinner.quest.multiplier} XP</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Winner Form */}
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label htmlFor="display_name">Display Name (Optional)</Label>
+                    <Input
+                      id="display_name"
+                      value={winnerForm.display_name}
+                      onChange={(e) => setWinnerForm(prev => ({ ...prev, display_name: e.target.value }))}
+                      placeholder="Winner's display name"
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="winning_token">Token</Label>
+                    <Select
+                      value={winnerForm.winning_token}
+                      onValueChange={(value) => setWinnerForm(prev => ({ ...prev, winning_token: value }))}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="ALPH">ALPH</SelectItem>
+                        <SelectItem value="USDT">USDT</SelectItem>
+                        <SelectItem value="USDC">USDC</SelectItem>
+                        <SelectItem value="BTC">BTC</SelectItem>
+                        <SelectItem value="ETH">ETH</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label htmlFor="winning_amount">Winning Amount *</Label>
+                    <Input
+                      id="winning_amount"
+                      type="number"
+                      step="0.000001"
+                      value={winnerForm.winning_amount}
+                      onChange={(e) => setWinnerForm(prev => ({ ...prev, winning_amount: e.target.value }))}
+                      placeholder="0.000000"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="approx_amount_usd">USD Value (Optional)</Label>
+                    <Input
+                      id="approx_amount_usd"
+                      type="number"
+                      step="0.01"
+                      value={winnerForm.approx_amount_usd}
+                      onChange={(e) => setWinnerForm(prev => ({ ...prev, approx_amount_usd: e.target.value }))}
+                      placeholder="0.00"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label htmlFor="exchange_rate_usd">Exchange Rate USD (Optional)</Label>
+                    <Input
+                      id="exchange_rate_usd"
+                      type="number"
+                      step="0.000001"
+                      value={winnerForm.exchange_rate_usd}
+                      onChange={(e) => setWinnerForm(prev => ({ ...prev, exchange_rate_usd: e.target.value }))}
+                      placeholder="0.000000"
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="pricing_source">Pricing Source (Optional)</Label>
+                    <Select
+                      value={winnerForm.pricing_source}
+                      onValueChange={(value) => setWinnerForm(prev => ({ ...prev, pricing_source: value }))}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select source" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="coingecko">CoinGecko</SelectItem>
+                        <SelectItem value="coinmarketcap">CoinMarketCap</SelectItem>
+                        <SelectItem value="binance">Binance</SelectItem>
+                        <SelectItem value="manual">Manual Entry</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                <div>
+                  <Label htmlFor="status">Status</Label>
+                  <Select
+                    value={winnerForm.status}
+                    onValueChange={(value: 'pending' | 'awarded' | 'failed' | 'cancelled') => 
+                      setWinnerForm(prev => ({ ...prev, status: value }))
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="pending">Pending</SelectItem>
+                      <SelectItem value="awarded">Awarded</SelectItem>
+                      <SelectItem value="failed">Failed</SelectItem>
+                      <SelectItem value="cancelled">Cancelled</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div>
+                  <Label htmlFor="tx_hash">Transaction Hash (Optional)</Label>
+                  <Input
+                    id="tx_hash"
+                    value={winnerForm.tx_hash}
+                    onChange={(e) => setWinnerForm(prev => ({ ...prev, tx_hash: e.target.value }))}
+                    placeholder="Transaction hash if already sent"
+                  />
+                </div>
+
+                <div>
+                  <Label htmlFor="proof_url">Proof URL</Label>
+                  <Input
+                    id="proof_url"
+                    value={winnerForm.proof_url}
+                    onChange={(e) => setWinnerForm(prev => ({ ...prev, proof_url: e.target.value }))}
+                    placeholder="URL to proof or evidence"
+                  />
+                </div>
+
+                <div>
+                  <Label htmlFor="comments">Comments (Optional)</Label>
+                  <Textarea
+                    id="comments"
+                    value={winnerForm.comments}
+                    onChange={(e) => setWinnerForm(prev => ({ ...prev, comments: e.target.value }))}
+                    placeholder="Additional notes or comments"
+                    rows={3}
+                  />
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex justify-end gap-2 pt-4 border-t">
+                <Button
+                  variant="outline"
+                  onClick={() => setSelectingWinner(null)}
+                  disabled={isCreatingWinner}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={handleCreateWinner}
+                  disabled={isCreatingWinner || !winnerForm.winning_amount}
+                  className="bg-purple-600 hover:bg-purple-700"
+                >
+                  {isCreatingWinner ? (
+                    <>
+                      <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                      Creating Winner...
+                    </>
+                  ) : (
+                    <>
+                      <Crown className="h-4 w-4 mr-2" />
+                      Select Winner
+                    </>
+                  )}
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
 
       {/* XP Verification Results Modal */}
       {xpVerificationModal && xpVerificationResults && (

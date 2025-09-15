@@ -164,7 +164,7 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
   // Permission logic
   const rolePermissions: Record<string, string[]> = {
     super_admin: ['*'],
-    sub_admin: ['dashboard.view', 'quests.manage', 'users.view', 'submissions.review'],
+    sub_admin: ['dashboard.view', 'quests.manage', 'users.view', 'submissions.review', 'winners.view'],
     moderator: ['dashboard.view', 'submissions.review'],
     viewer: ['dashboard.view'],
   }

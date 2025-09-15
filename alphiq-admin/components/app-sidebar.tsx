@@ -25,6 +25,7 @@ import {
   Settings,
   Shield,
   LogOut,
+  Trophy,
 } from "lucide-react"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
@@ -55,6 +56,12 @@ const menuItems = [
     url: "/submissions",
     icon: FileCheck,
     permission: "submissions.review",
+  },
+  {
+    title: "Winners",
+    url: "/winners",
+    icon: Trophy,
+    permission: "winners.view",
   },
   {
     title: "Users & XP",
