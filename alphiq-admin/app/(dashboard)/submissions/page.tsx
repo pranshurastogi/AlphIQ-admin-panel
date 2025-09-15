@@ -78,6 +78,7 @@ import {
   Crown,
   Coins,
   DollarSign,
+  Edit,
 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { useAuth } from "@/components/auth-provider"
@@ -174,6 +175,7 @@ export default function SubmissionsPage() {
     display_name: '',
     winning_amount: '',
     winning_token: 'ALPH',
+    custom_token: '',
     approx_amount_usd: '',
     exchange_rate_usd: '',
     pricing_source: '',
@@ -182,8 +184,25 @@ export default function SubmissionsPage() {
     tx_hash: '',
     proof_url: '',
   })
+  const [useCustomToken, setUseCustomToken] = useState(false)
   const [isCreatingWinner, setIsCreatingWinner] = useState(false)
   const [winnerSubmissions, setWinnerSubmissions] = useState<Set<number>>(new Set())
+  const [editingWinnerFromSubmission, setEditingWinnerFromSubmission] = useState<{submission: Submission, winner: any} | null>(null)
+  const [editWinnerForm, setEditWinnerForm] = useState({
+    display_name: '',
+    winning_amount: '',
+    winning_token: '',
+    custom_token: '',
+    approx_amount_usd: '',
+    exchange_rate_usd: '',
+    pricing_source: '',
+    status: 'pending' as 'pending' | 'awarded' | 'failed' | 'cancelled',
+    comments: '',
+    tx_hash: '',
+    proof_url: '',
+  })
+  const [useCustomTokenEdit, setUseCustomTokenEdit] = useState(false)
+  const [isUpdatingWinnerFromSubmission, setIsUpdatingWinnerFromSubmission] = useState(false)
 
   // Helper function to verify XP consistency across all users
   const verifyXPConsistency = async () => {
@@ -999,6 +1018,7 @@ export default function SubmissionsPage() {
       display_name: '',
       winning_amount: '',
       winning_token: 'ALPH',
+      custom_token: '',
       approx_amount_usd: '',
       exchange_rate_usd: '',
       pricing_source: '',
@@ -1007,6 +1027,7 @@ export default function SubmissionsPage() {
       tx_hash: '',
       proof_url: submission.proof_url,
     })
+    setUseCustomToken(false)
   }
 
   const handleCreateWinner = async () => {
@@ -1019,6 +1040,16 @@ export default function SubmissionsPage() {
         toast({
           title: "Error",
           description: "Please enter a valid winning amount",
+          variant: "destructive",
+        })
+        return
+      }
+
+      // Validate custom token if using custom token
+      if (useCustomToken && (!winnerForm.custom_token || winnerForm.custom_token.trim() === '')) {
+        toast({
+          title: "Error",
+          description: "Please enter a custom token name",
           variant: "destructive",
         })
         return
@@ -1051,7 +1082,7 @@ export default function SubmissionsPage() {
           display_name: winnerForm.display_name || null,
           info: null,
           winning_amount: parseFloat(winnerForm.winning_amount),
-          winning_token: winnerForm.winning_token || null,
+          winning_token: useCustomToken ? winnerForm.custom_token.trim() : winnerForm.winning_token || null,
           approx_amount_usd: winnerForm.approx_amount_usd ? parseFloat(winnerForm.approx_amount_usd) : null,
           exchange_rate_usd: winnerForm.exchange_rate_usd ? parseFloat(winnerForm.exchange_rate_usd) : null,
           pricing_source: winnerForm.pricing_source || null,
@@ -1087,18 +1118,20 @@ export default function SubmissionsPage() {
 
       // Reset form and close dialog
       setSelectingWinner(null)
-      setWinnerForm({
-        display_name: '',
-        winning_amount: '',
-        winning_token: 'ALPH',
-        approx_amount_usd: '',
-        exchange_rate_usd: '',
-        pricing_source: '',
-        status: 'pending',
-        comments: '',
-        tx_hash: '',
-        proof_url: '',
-      })
+    setWinnerForm({
+      display_name: '',
+      winning_amount: '',
+      winning_token: 'ALPH',
+      custom_token: '',
+      approx_amount_usd: '',
+      exchange_rate_usd: '',
+      pricing_source: '',
+      status: 'pending',
+      comments: '',
+      tx_hash: '',
+      proof_url: '',
+    })
+    setUseCustomToken(false)
 
     } catch (error) {
       console.error('Error creating winner:', error)
@@ -1109,6 +1142,147 @@ export default function SubmissionsPage() {
       })
     } finally {
       setIsCreatingWinner(false)
+    }
+  }
+
+  const handleEditWinnerFromSubmission = async (submission: Submission) => {
+    try {
+      // Fetch the winner data for this submission
+      const { data: winner, error } = await supabase
+        .from('admin_quest_winners')
+        .select('*')
+        .eq('submission_id', submission.id)
+        .single()
+
+      if (error || !winner) {
+        toast({
+          title: "Error",
+          description: "No winner record found for this submission",
+          variant: "destructive",
+        })
+        return
+      }
+
+      setEditingWinnerFromSubmission({ submission, winner })
+      setEditWinnerForm({
+        display_name: winner.display_name || '',
+        winning_amount: winner.winning_amount.toString(),
+        winning_token: winner.winning_token || '',
+        custom_token: '',
+        approx_amount_usd: winner.approx_amount_usd?.toString() || '',
+        exchange_rate_usd: winner.exchange_rate_usd?.toString() || '',
+        pricing_source: winner.pricing_source || '',
+        status: winner.status,
+        comments: winner.comments || '',
+        tx_hash: winner.tx_hash || '',
+        proof_url: winner.proof_url || '',
+      })
+
+      // Check if token is in predefined list
+      const predefinedTokens = ['ALPH', 'USDT', 'USDC', 'BTC', 'ETH', 'BNB', 'ADA', 'SOL', 'DOT', 'MATIC', 'AVAX', 'LINK', 'UNI']
+      if (winner.winning_token && !predefinedTokens.includes(winner.winning_token)) {
+        setUseCustomTokenEdit(true)
+        setEditWinnerForm(prev => ({ ...prev, custom_token: winner.winning_token || '' }))
+      } else {
+        setUseCustomTokenEdit(false)
+      }
+    } catch (error) {
+      console.error('Error fetching winner data:', error)
+      toast({
+        title: "Error",
+        description: "Failed to fetch winner data",
+        variant: "destructive",
+      })
+    }
+  }
+
+  const handleUpdateWinnerFromSubmission = async () => {
+    if (!editingWinnerFromSubmission || !profile) return
+
+    setIsUpdatingWinnerFromSubmission(true)
+    try {
+      // Validate required fields
+      if (!editWinnerForm.winning_amount || parseFloat(editWinnerForm.winning_amount) <= 0) {
+        toast({
+          title: "Error",
+          description: "Please enter a valid winning amount",
+          variant: "destructive",
+        })
+        return
+      }
+
+      // Validate custom token if using custom token
+      if (useCustomTokenEdit && (!editWinnerForm.custom_token || editWinnerForm.custom_token.trim() === '')) {
+        toast({
+          title: "Error",
+          description: "Please enter a custom token name",
+          variant: "destructive",
+        })
+        return
+      }
+
+      // Update winner record
+      const { data: winner, error } = await supabase
+        .from('admin_quest_winners')
+        .update({
+          display_name: editWinnerForm.display_name || null,
+          winning_amount: parseFloat(editWinnerForm.winning_amount),
+          winning_token: useCustomTokenEdit ? editWinnerForm.custom_token.trim() : editWinnerForm.winning_token || null,
+          approx_amount_usd: editWinnerForm.approx_amount_usd ? parseFloat(editWinnerForm.approx_amount_usd) : null,
+          exchange_rate_usd: editWinnerForm.exchange_rate_usd ? parseFloat(editWinnerForm.exchange_rate_usd) : null,
+          pricing_source: editWinnerForm.pricing_source || null,
+          priced_at: editWinnerForm.pricing_source ? new Date().toISOString() : null,
+          status: editWinnerForm.status,
+          comments: editWinnerForm.comments || null,
+          tx_hash: editWinnerForm.tx_hash || null,
+          proof_url: editWinnerForm.proof_url || null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('winner_id', editingWinnerFromSubmission.winner.winner_id)
+        .select()
+        .single()
+
+      if (error) {
+        console.error('Error updating winner:', error)
+        toast({
+          title: "Error",
+          description: "Failed to update winner record",
+          variant: "destructive",
+        })
+        return
+      }
+
+      toast({
+        title: "Winner Updated",
+        description: `Successfully updated winner record for ${editingWinnerFromSubmission.submission.user_address}`,
+      })
+
+      // Reset form and close dialog
+      setEditingWinnerFromSubmission(null)
+      setEditWinnerForm({
+        display_name: '',
+        winning_amount: '',
+        winning_token: '',
+        custom_token: '',
+        approx_amount_usd: '',
+        exchange_rate_usd: '',
+        pricing_source: '',
+        status: 'pending',
+        comments: '',
+        tx_hash: '',
+        proof_url: '',
+      })
+      setUseCustomTokenEdit(false)
+
+    } catch (error) {
+      console.error('Error updating winner:', error)
+      toast({
+        title: "Error",
+        description: "Failed to update winner record",
+        variant: "destructive",
+      })
+    } finally {
+      setIsUpdatingWinnerFromSubmission(false)
     }
   }
 
@@ -1720,10 +1894,22 @@ export default function SubmissionsPage() {
                         {submission.status === 'approved' && canSelectWinner(submission) && (
                           <>
                             {winnerSubmissions.has(submission.id) ? (
-                              <Badge variant="default" className="bg-purple-100 text-purple-700 border-purple-200">
-                                <Crown className="h-3 w-3 mr-1" />
-                                Winner
-                              </Badge>
+                              <div className="flex items-center gap-1">
+                                <Badge variant="default" className="bg-purple-100 text-purple-700 border-purple-200">
+                                  <Crown className="h-3 w-3 mr-1" />
+                                  Winner
+                                </Badge>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleEditWinnerFromSubmission(submission)}
+                                  disabled={isUpdatingWinnerFromSubmission}
+                                  className="text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                                  title="Edit Winner Data"
+                                >
+                                  <Edit className="h-3 w-3" />
+                                </Button>
+                              </div>
                             ) : (
                               <Button
                                 variant="ghost"
@@ -1967,21 +2153,52 @@ export default function SubmissionsPage() {
                   </div>
                   <div>
                     <Label htmlFor="winning_token">Token</Label>
-                    <Select
-                      value={winnerForm.winning_token}
-                      onValueChange={(value) => setWinnerForm(prev => ({ ...prev, winning_token: value }))}
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="ALPH">ALPH</SelectItem>
-                        <SelectItem value="USDT">USDT</SelectItem>
-                        <SelectItem value="USDC">USDC</SelectItem>
-                        <SelectItem value="BTC">BTC</SelectItem>
-                        <SelectItem value="ETH">ETH</SelectItem>
-                      </SelectContent>
-                    </Select>
+                    <div className="space-y-2">
+                      <Select
+                        value={useCustomToken ? "custom" : winnerForm.winning_token}
+                        onValueChange={(value) => {
+                          if (value === "custom") {
+                            setUseCustomToken(true)
+                          } else {
+                            setUseCustomToken(false)
+                            setWinnerForm(prev => ({ ...prev, winning_token: value }))
+                          }
+                        }}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="ALPH">ALPH</SelectItem>
+                          <SelectItem value="USDT">USDT</SelectItem>
+                          <SelectItem value="USDC">USDC</SelectItem>
+                          <SelectItem value="BTC">BTC</SelectItem>
+                          <SelectItem value="ETH">ETH</SelectItem>
+                          <SelectItem value="BNB">BNB</SelectItem>
+                          <SelectItem value="ADA">ADA</SelectItem>
+                          <SelectItem value="SOL">SOL</SelectItem>
+                          <SelectItem value="DOT">DOT</SelectItem>
+                          <SelectItem value="MATIC">MATIC</SelectItem>
+                          <SelectItem value="AVAX">AVAX</SelectItem>
+                          <SelectItem value="LINK">LINK</SelectItem>
+                          <SelectItem value="UNI">UNI</SelectItem>
+                          <SelectItem value="custom">Custom Token</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      {useCustomToken && (
+                        <div className="space-y-1">
+                          <Input
+                            placeholder="Enter custom token name (e.g., MYTOKEN)"
+                            value={winnerForm.custom_token}
+                            onChange={(e) => setWinnerForm(prev => ({ ...prev, custom_token: e.target.value.toUpperCase() }))}
+                            className="mt-2"
+                          />
+                          <p className="text-xs text-muted-foreground">
+                            Enter the token symbol or name (will be converted to uppercase)
+                          </p>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
 
@@ -2105,7 +2322,7 @@ export default function SubmissionsPage() {
                 </Button>
                 <Button
                   onClick={handleCreateWinner}
-                  disabled={isCreatingWinner || !winnerForm.winning_amount}
+                  disabled={isCreatingWinner || !winnerForm.winning_amount || (useCustomToken && !winnerForm.custom_token.trim())}
                   className="bg-purple-600 hover:bg-purple-700"
                 >
                   {isCreatingWinner ? (
@@ -2117,6 +2334,248 @@ export default function SubmissionsPage() {
                     <>
                       <Crown className="h-4 w-4 mr-2" />
                       Select Winner
+                    </>
+                  )}
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
+
+      {/* Edit Winner from Submission Dialog */}
+      {editingWinnerFromSubmission && (
+        <Dialog open={!!editingWinnerFromSubmission} onOpenChange={() => setEditingWinnerFromSubmission(null)}>
+          <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Edit className="h-5 w-5 text-blue-600" />
+                Edit Winner Data
+              </DialogTitle>
+              <DialogDescription>
+                Update winner details for this submission
+              </DialogDescription>
+            </DialogHeader>
+            
+            <div className="space-y-6">
+              {/* Submission Info */}
+              <div className="p-4 bg-muted rounded-lg">
+                <h3 className="font-semibold mb-2">Submission Details</h3>
+                <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div>
+                    <Label className="text-muted-foreground">User Address</Label>
+                    <p className="font-mono break-all">{editingWinnerFromSubmission.submission.user_address}</p>
+                  </div>
+                  <div>
+                    <Label className="text-muted-foreground">Quest</Label>
+                    <p className="font-medium">{editingWinnerFromSubmission.submission.quest.title}</p>
+                  </div>
+                  <div>
+                    <Label className="text-muted-foreground">Winner ID</Label>
+                    <p className="font-mono text-xs">{editingWinnerFromSubmission.winner.winner_id}</p>
+                  </div>
+                  <div>
+                    <Label className="text-muted-foreground">Awarded At</Label>
+                    <p>{formatDate(editingWinnerFromSubmission.winner.awarded_at)}</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Edit Form */}
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label htmlFor="edit_sub_display_name">Display Name (Optional)</Label>
+                    <Input
+                      id="edit_sub_display_name"
+                      value={editWinnerForm.display_name}
+                      onChange={(e) => setEditWinnerForm(prev => ({ ...prev, display_name: e.target.value }))}
+                      placeholder="Winner's display name"
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="edit_sub_winning_token">Token</Label>
+                    <div className="space-y-2">
+                      <Select
+                        value={useCustomTokenEdit ? "custom" : editWinnerForm.winning_token}
+                        onValueChange={(value) => {
+                          if (value === "custom") {
+                            setUseCustomTokenEdit(true)
+                          } else {
+                            setUseCustomTokenEdit(false)
+                            setEditWinnerForm(prev => ({ ...prev, winning_token: value }))
+                          }
+                        }}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="ALPH">ALPH</SelectItem>
+                          <SelectItem value="USDT">USDT</SelectItem>
+                          <SelectItem value="USDC">USDC</SelectItem>
+                          <SelectItem value="BTC">BTC</SelectItem>
+                          <SelectItem value="ETH">ETH</SelectItem>
+                          <SelectItem value="BNB">BNB</SelectItem>
+                          <SelectItem value="ADA">ADA</SelectItem>
+                          <SelectItem value="SOL">SOL</SelectItem>
+                          <SelectItem value="DOT">DOT</SelectItem>
+                          <SelectItem value="MATIC">MATIC</SelectItem>
+                          <SelectItem value="AVAX">AVAX</SelectItem>
+                          <SelectItem value="LINK">LINK</SelectItem>
+                          <SelectItem value="UNI">UNI</SelectItem>
+                          <SelectItem value="custom">Custom Token</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      {useCustomTokenEdit && (
+                        <div className="space-y-1">
+                          <Input
+                            placeholder="Enter custom token name (e.g., MYTOKEN)"
+                            value={editWinnerForm.custom_token}
+                            onChange={(e) => setEditWinnerForm(prev => ({ ...prev, custom_token: e.target.value.toUpperCase() }))}
+                            className="mt-2"
+                          />
+                          <p className="text-xs text-muted-foreground">
+                            Enter the token symbol or name (will be converted to uppercase)
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label htmlFor="edit_sub_winning_amount">Winning Amount *</Label>
+                    <Input
+                      id="edit_sub_winning_amount"
+                      type="number"
+                      step="0.000001"
+                      value={editWinnerForm.winning_amount}
+                      onChange={(e) => setEditWinnerForm(prev => ({ ...prev, winning_amount: e.target.value }))}
+                      placeholder="0.000000"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="edit_sub_approx_amount_usd">USD Value (Optional)</Label>
+                    <Input
+                      id="edit_sub_approx_amount_usd"
+                      type="number"
+                      step="0.01"
+                      value={editWinnerForm.approx_amount_usd}
+                      onChange={(e) => setEditWinnerForm(prev => ({ ...prev, approx_amount_usd: e.target.value }))}
+                      placeholder="0.00"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label htmlFor="edit_sub_exchange_rate_usd">Exchange Rate USD (Optional)</Label>
+                    <Input
+                      id="edit_sub_exchange_rate_usd"
+                      type="number"
+                      step="0.000001"
+                      value={editWinnerForm.exchange_rate_usd}
+                      onChange={(e) => setEditWinnerForm(prev => ({ ...prev, exchange_rate_usd: e.target.value }))}
+                      placeholder="0.000000"
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="edit_sub_pricing_source">Pricing Source (Optional)</Label>
+                    <Select
+                      value={editWinnerForm.pricing_source}
+                      onValueChange={(value) => setEditWinnerForm(prev => ({ ...prev, pricing_source: value }))}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select source" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="coingecko">CoinGecko</SelectItem>
+                        <SelectItem value="coinmarketcap">CoinMarketCap</SelectItem>
+                        <SelectItem value="binance">Binance</SelectItem>
+                        <SelectItem value="manual">Manual Entry</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                <div>
+                  <Label htmlFor="edit_sub_status">Status</Label>
+                  <Select
+                    value={editWinnerForm.status}
+                    onValueChange={(value: 'pending' | 'awarded' | 'failed' | 'cancelled') => 
+                      setEditWinnerForm(prev => ({ ...prev, status: value }))
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="pending">Pending</SelectItem>
+                      <SelectItem value="awarded">Awarded</SelectItem>
+                      <SelectItem value="failed">Failed</SelectItem>
+                      <SelectItem value="cancelled">Cancelled</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div>
+                  <Label htmlFor="edit_sub_tx_hash">Transaction Hash (Optional)</Label>
+                  <Input
+                    id="edit_sub_tx_hash"
+                    value={editWinnerForm.tx_hash}
+                    onChange={(e) => setEditWinnerForm(prev => ({ ...prev, tx_hash: e.target.value }))}
+                    placeholder="Transaction hash if already sent"
+                  />
+                </div>
+
+                <div>
+                  <Label htmlFor="edit_sub_proof_url">Proof URL</Label>
+                  <Input
+                    id="edit_sub_proof_url"
+                    value={editWinnerForm.proof_url}
+                    onChange={(e) => setEditWinnerForm(prev => ({ ...prev, proof_url: e.target.value }))}
+                    placeholder="URL to proof or evidence"
+                  />
+                </div>
+
+                <div>
+                  <Label htmlFor="edit_sub_comments">Comments (Optional)</Label>
+                  <Textarea
+                    id="edit_sub_comments"
+                    value={editWinnerForm.comments}
+                    onChange={(e) => setEditWinnerForm(prev => ({ ...prev, comments: e.target.value }))}
+                    placeholder="Additional notes or comments"
+                    rows={3}
+                  />
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex justify-end gap-2 pt-4 border-t">
+                <Button
+                  variant="outline"
+                  onClick={() => setEditingWinnerFromSubmission(null)}
+                  disabled={isUpdatingWinnerFromSubmission}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={handleUpdateWinnerFromSubmission}
+                  disabled={isUpdatingWinnerFromSubmission || !editWinnerForm.winning_amount || (useCustomTokenEdit && !editWinnerForm.custom_token.trim())}
+                  className="bg-blue-600 hover:bg-blue-700"
+                >
+                  {isUpdatingWinnerFromSubmission ? (
+                    <>
+                      <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                      Updating Winner...
+                    </>
+                  ) : (
+                    <>
+                      <Edit className="h-4 w-4 mr-2" />
+                      Update Winner
                     </>
                   )}
                 </Button>

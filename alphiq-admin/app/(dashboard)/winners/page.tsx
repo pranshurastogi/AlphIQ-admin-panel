@@ -78,6 +78,7 @@ import {
   Coins,
   TrendingUp,
   Hash,
+  Edit,
 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { useAuth } from "@/components/auth-provider"
@@ -144,6 +145,22 @@ export default function WinnersPage() {
   const [createdByFilter, setCreatedByFilter] = useState<string>("all")
   const [selectedWinners, setSelectedWinners] = useState<string[]>([])
   const [viewingWinner, setViewingWinner] = useState<Winner | null>(null)
+  const [editingWinner, setEditingWinner] = useState<Winner | null>(null)
+  const [editForm, setEditForm] = useState({
+    display_name: '',
+    winning_amount: '',
+    winning_token: '',
+    custom_token: '',
+    approx_amount_usd: '',
+    exchange_rate_usd: '',
+    pricing_source: '',
+    status: 'pending' as 'pending' | 'awarded' | 'failed' | 'cancelled',
+    comments: '',
+    tx_hash: '',
+    proof_url: '',
+  })
+  const [useCustomToken, setUseCustomToken] = useState(false)
+  const [isUpdatingWinner, setIsUpdatingWinner] = useState(false)
   const [stats, setStats] = useState<WinnerStats>({
     total: 0,
     pending: 0,
@@ -328,6 +345,141 @@ export default function WinnersPage() {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     })}`
+  }
+
+  const canEditWinner = (winner: Winner) => {
+    if (!profile) return false
+    
+    // Super admin can edit all winners
+    if (profile.role === 'super_admin') return true
+    
+    // Sub admin can only edit winners for quests they created
+    if (profile.role === 'sub_admin' && winner.quest.created_by === profile.id) return true
+    
+    return false
+  }
+
+  const handleEditWinner = (winner: Winner) => {
+    setEditingWinner(winner)
+    setEditForm({
+      display_name: winner.display_name || '',
+      winning_amount: winner.winning_amount.toString(),
+      winning_token: winner.winning_token || '',
+      custom_token: '',
+      approx_amount_usd: winner.approx_amount_usd?.toString() || '',
+      exchange_rate_usd: winner.exchange_rate_usd?.toString() || '',
+      pricing_source: winner.pricing_source || '',
+      status: winner.status,
+      comments: winner.comments || '',
+      tx_hash: winner.tx_hash || '',
+      proof_url: winner.proof_url || '',
+    })
+    
+    // Check if token is in predefined list
+    const predefinedTokens = ['ALPH', 'USDT', 'USDC', 'BTC', 'ETH', 'BNB', 'ADA', 'SOL', 'DOT', 'MATIC', 'AVAX', 'LINK', 'UNI']
+    if (winner.winning_token && !predefinedTokens.includes(winner.winning_token)) {
+      setUseCustomToken(true)
+      setEditForm(prev => ({ ...prev, custom_token: winner.winning_token || '' }))
+    } else {
+      setUseCustomToken(false)
+    }
+  }
+
+  const handleUpdateWinner = async () => {
+    if (!editingWinner || !profile) return
+
+    setIsUpdatingWinner(true)
+    try {
+      // Validate required fields
+      if (!editForm.winning_amount || parseFloat(editForm.winning_amount) <= 0) {
+        toast({
+          title: "Error",
+          description: "Please enter a valid winning amount",
+          variant: "destructive",
+        })
+        return
+      }
+
+      // Validate custom token if using custom token
+      if (useCustomToken && (!editForm.custom_token || editForm.custom_token.trim() === '')) {
+        toast({
+          title: "Error",
+          description: "Please enter a custom token name",
+          variant: "destructive",
+        })
+        return
+      }
+
+      // Update winner record
+      const { data: winner, error } = await supabase
+        .from('admin_quest_winners')
+        .update({
+          display_name: editForm.display_name || null,
+          winning_amount: parseFloat(editForm.winning_amount),
+          winning_token: useCustomToken ? editForm.custom_token.trim() : editForm.winning_token || null,
+          approx_amount_usd: editForm.approx_amount_usd ? parseFloat(editForm.approx_amount_usd) : null,
+          exchange_rate_usd: editForm.exchange_rate_usd ? parseFloat(editForm.exchange_rate_usd) : null,
+          pricing_source: editForm.pricing_source || null,
+          priced_at: editForm.pricing_source ? new Date().toISOString() : null,
+          status: editForm.status,
+          comments: editForm.comments || null,
+          tx_hash: editForm.tx_hash || null,
+          proof_url: editForm.proof_url || null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('winner_id', editingWinner.winner_id)
+        .select()
+        .single()
+
+      if (error) {
+        console.error('Error updating winner:', error)
+        toast({
+          title: "Error",
+          description: "Failed to update winner record",
+          variant: "destructive",
+        })
+        return
+      }
+
+      toast({
+        title: "Winner Updated",
+        description: `Successfully updated winner record for ${editingWinner.user_address}`,
+      })
+
+      // Update local state
+      setWinners(winners.map(w => 
+        w.winner_id === editingWinner.winner_id 
+          ? { ...w, ...winner }
+          : w
+      ))
+
+      // Reset form and close dialog
+      setEditingWinner(null)
+      setEditForm({
+        display_name: '',
+        winning_amount: '',
+        winning_token: '',
+        custom_token: '',
+        approx_amount_usd: '',
+        exchange_rate_usd: '',
+        pricing_source: '',
+        status: 'pending',
+        comments: '',
+        tx_hash: '',
+        proof_url: '',
+      })
+      setUseCustomToken(false)
+
+    } catch (error) {
+      console.error('Error updating winner:', error)
+      toast({
+        title: "Error",
+        description: "Failed to update winner record",
+        variant: "destructive",
+      })
+    } finally {
+      setIsUpdatingWinner(false)
+    }
   }
 
   // CSV Export functionality
@@ -891,6 +1043,18 @@ export default function WinnersPage() {
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex items-center justify-end gap-2">
+                          {canEditWinner(winner) && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleEditWinner(winner)}
+                              disabled={isUpdatingWinner}
+                              className="text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                              title="Edit Winner"
+                            >
+                              <Edit className="h-4 w-4" />
+                            </Button>
+                          )}
                           <Sheet>
                             <SheetTrigger asChild>
                               <Button
@@ -1107,6 +1271,248 @@ export default function WinnersPage() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Edit Winner Dialog */}
+      {editingWinner && (
+        <Dialog open={!!editingWinner} onOpenChange={() => setEditingWinner(null)}>
+          <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Edit className="h-5 w-5 text-blue-600" />
+                Edit Winner
+              </DialogTitle>
+              <DialogDescription>
+                Update winner details and reward information
+              </DialogDescription>
+            </DialogHeader>
+            
+            <div className="space-y-6">
+              {/* Winner Info */}
+              <div className="p-4 bg-muted rounded-lg">
+                <h3 className="font-semibold mb-2">Winner Information</h3>
+                <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div>
+                    <Label className="text-muted-foreground">User Address</Label>
+                    <p className="font-mono break-all">{editingWinner.user_address}</p>
+                  </div>
+                  <div>
+                    <Label className="text-muted-foreground">Quest</Label>
+                    <p className="font-medium">{editingWinner.quest.title}</p>
+                  </div>
+                  <div>
+                    <Label className="text-muted-foreground">Winner ID</Label>
+                    <p className="font-mono text-xs">{editingWinner.winner_id}</p>
+                  </div>
+                  <div>
+                    <Label className="text-muted-foreground">Awarded At</Label>
+                    <p>{formatDate(editingWinner.awarded_at)}</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Edit Form */}
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label htmlFor="edit_display_name">Display Name (Optional)</Label>
+                    <Input
+                      id="edit_display_name"
+                      value={editForm.display_name}
+                      onChange={(e) => setEditForm(prev => ({ ...prev, display_name: e.target.value }))}
+                      placeholder="Winner's display name"
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="edit_winning_token">Token</Label>
+                    <div className="space-y-2">
+                      <Select
+                        value={useCustomToken ? "custom" : editForm.winning_token}
+                        onValueChange={(value) => {
+                          if (value === "custom") {
+                            setUseCustomToken(true)
+                          } else {
+                            setUseCustomToken(false)
+                            setEditForm(prev => ({ ...prev, winning_token: value }))
+                          }
+                        }}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="ALPH">ALPH</SelectItem>
+                          <SelectItem value="USDT">USDT</SelectItem>
+                          <SelectItem value="USDC">USDC</SelectItem>
+                          <SelectItem value="BTC">BTC</SelectItem>
+                          <SelectItem value="ETH">ETH</SelectItem>
+                          <SelectItem value="BNB">BNB</SelectItem>
+                          <SelectItem value="ADA">ADA</SelectItem>
+                          <SelectItem value="SOL">SOL</SelectItem>
+                          <SelectItem value="DOT">DOT</SelectItem>
+                          <SelectItem value="MATIC">MATIC</SelectItem>
+                          <SelectItem value="AVAX">AVAX</SelectItem>
+                          <SelectItem value="LINK">LINK</SelectItem>
+                          <SelectItem value="UNI">UNI</SelectItem>
+                          <SelectItem value="custom">Custom Token</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      {useCustomToken && (
+                        <div className="space-y-1">
+                          <Input
+                            placeholder="Enter custom token name (e.g., MYTOKEN)"
+                            value={editForm.custom_token}
+                            onChange={(e) => setEditForm(prev => ({ ...prev, custom_token: e.target.value.toUpperCase() }))}
+                            className="mt-2"
+                          />
+                          <p className="text-xs text-muted-foreground">
+                            Enter the token symbol or name (will be converted to uppercase)
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label htmlFor="edit_winning_amount">Winning Amount *</Label>
+                    <Input
+                      id="edit_winning_amount"
+                      type="number"
+                      step="0.000001"
+                      value={editForm.winning_amount}
+                      onChange={(e) => setEditForm(prev => ({ ...prev, winning_amount: e.target.value }))}
+                      placeholder="0.000000"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="edit_approx_amount_usd">USD Value (Optional)</Label>
+                    <Input
+                      id="edit_approx_amount_usd"
+                      type="number"
+                      step="0.01"
+                      value={editForm.approx_amount_usd}
+                      onChange={(e) => setEditForm(prev => ({ ...prev, approx_amount_usd: e.target.value }))}
+                      placeholder="0.00"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label htmlFor="edit_exchange_rate_usd">Exchange Rate USD (Optional)</Label>
+                    <Input
+                      id="edit_exchange_rate_usd"
+                      type="number"
+                      step="0.000001"
+                      value={editForm.exchange_rate_usd}
+                      onChange={(e) => setEditForm(prev => ({ ...prev, exchange_rate_usd: e.target.value }))}
+                      placeholder="0.000000"
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="edit_pricing_source">Pricing Source (Optional)</Label>
+                    <Select
+                      value={editForm.pricing_source}
+                      onValueChange={(value) => setEditForm(prev => ({ ...prev, pricing_source: value }))}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select source" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="coingecko">CoinGecko</SelectItem>
+                        <SelectItem value="coinmarketcap">CoinMarketCap</SelectItem>
+                        <SelectItem value="binance">Binance</SelectItem>
+                        <SelectItem value="manual">Manual Entry</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                <div>
+                  <Label htmlFor="edit_status">Status</Label>
+                  <Select
+                    value={editForm.status}
+                    onValueChange={(value: 'pending' | 'awarded' | 'failed' | 'cancelled') => 
+                      setEditForm(prev => ({ ...prev, status: value }))
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="pending">Pending</SelectItem>
+                      <SelectItem value="awarded">Awarded</SelectItem>
+                      <SelectItem value="failed">Failed</SelectItem>
+                      <SelectItem value="cancelled">Cancelled</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div>
+                  <Label htmlFor="edit_tx_hash">Transaction Hash (Optional)</Label>
+                  <Input
+                    id="edit_tx_hash"
+                    value={editForm.tx_hash}
+                    onChange={(e) => setEditForm(prev => ({ ...prev, tx_hash: e.target.value }))}
+                    placeholder="Transaction hash if already sent"
+                  />
+                </div>
+
+                <div>
+                  <Label htmlFor="edit_proof_url">Proof URL</Label>
+                  <Input
+                    id="edit_proof_url"
+                    value={editForm.proof_url}
+                    onChange={(e) => setEditForm(prev => ({ ...prev, proof_url: e.target.value }))}
+                    placeholder="URL to proof or evidence"
+                  />
+                </div>
+
+                <div>
+                  <Label htmlFor="edit_comments">Comments (Optional)</Label>
+                  <Textarea
+                    id="edit_comments"
+                    value={editForm.comments}
+                    onChange={(e) => setEditForm(prev => ({ ...prev, comments: e.target.value }))}
+                    placeholder="Additional notes or comments"
+                    rows={3}
+                  />
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex justify-end gap-2 pt-4 border-t">
+                <Button
+                  variant="outline"
+                  onClick={() => setEditingWinner(null)}
+                  disabled={isUpdatingWinner}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={handleUpdateWinner}
+                  disabled={isUpdatingWinner || !editForm.winning_amount || (useCustomToken && !editForm.custom_token.trim())}
+                  className="bg-blue-600 hover:bg-blue-700"
+                >
+                  {isUpdatingWinner ? (
+                    <>
+                      <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                      Updating Winner...
+                    </>
+                  ) : (
+                    <>
+                      <Edit className="h-4 w-4 mr-2" />
+                      Update Winner
+                    </>
+                  )}
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   )
 }
